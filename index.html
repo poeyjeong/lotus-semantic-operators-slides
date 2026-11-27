@@ -82,268 +82,716 @@ pre code{background:none;padding:0}
 <!-- PART 1 -->
 <section class="slide" data-part="1">
 <h2>Semantic Operators and Their Optimization</h2>
-<p class="sub">LLM-based data processing with accuracy guarantees in LOTUS. Patel, Jha, Pan, Gupta, Asawa, Guestrin, Zaharia (Stanford, UC Berkeley).</p>
-<div class="def"><b>Core claim:</b> We can turn natural-language AI tasks (filter, join, top-k, aggregate) into <b>well-defined operations and speed them up</b> with statistical guarantees against a high-quality reference.</div>
+<p class="sub">LLM-based data processing with accuracy guarantees in LOTUS · Patel et al. (Stanford &amp; UC Berkeley, PVLDB 2025)</p>
+
+<div class="def"><b>Core idea:</b> Run natural-language queries (<code>filter</code>, <code>join</code>, <code>top-k</code>, <code>group-by</code>) over large datasets using fast proxies and an oracle LLM—cutting cost while keeping accuracy guarantees.</div>
+
+<svg class="diag" viewBox="0 0 900 205" role="img" aria-labelledby="titleOverviewDiag">
+<title id="titleOverviewDiag">LOTUS big-picture flow: natural-language request, smart proxy-assisted execution, and guaranteed results</title>
+<defs>
+  <marker id="ovArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+    <path d="M0 0L10 5L0 10z" fill="#5b6675"/>
+  </marker>
+</defs>
+
+<!-- Before / Input -->
+<rect class="dbox" x="12" y="16" width="244" height="172" rx="8"/>
+<text class="dh" x="134" y="42" text-anchor="middle">1 · What You Ask (Input)</text>
+<text class="dtxt" x="134" y="68" text-anchor="middle">Natural language on tables</text>
+<rect class="drej" x="28" y="84" width="212" height="44" rx="5"/>
+<text class="dsub" x="134" y="103" text-anchor="middle" style="fill:#1b2430">sem_filter("beats baseline")</text>
+<text class="dsub" x="134" y="119" text-anchor="middle" style="fill:#1b2430">sem_join("uses dataset")</text>
+<text class="dsub" x="134" y="152" text-anchor="middle">Calling a big LLM on everything</text>
+<text class="dsub" x="134" y="170" text-anchor="middle">is slow and expensive</text>
+
+<!-- Middle / Engine -->
+<rect class="dbox" x="292" y="16" width="336" height="172" rx="8"/>
+<text class="dh" x="460" y="42" text-anchor="middle">2 · How LOTUS Runs It (Middle)</text>
+<text class="dtxt" x="460" y="68" text-anchor="middle">Cheap helper first, big LLM only when needed</text>
+<rect class="dor" x="310" y="84" width="300" height="50" rx="5"/>
+<text class="dsub" x="460" y="104" text-anchor="middle" style="fill:#1b2430">Clear cases → fast proxy / similarity search</text>
+<text class="dsub" x="460" y="122" text-anchor="middle" style="fill:#1b2430">Unclear cases → strong LLM (oracle)</text>
+<text class="dsub" x="460" y="156" text-anchor="middle">Checks proxy quality via sampling</text>
+<text class="dsub" x="460" y="173" text-anchor="middle">to keep accuracy on target</text>
+
+<!-- After / Output -->
+<rect class="dacc" x="664" y="16" width="224" height="172" rx="8"/>
+<text class="dh" x="776" y="42" text-anchor="middle">3 · What You Get (Output)</text>
+<text class="dtxt" x="776" y="68" text-anchor="middle">Cheaper, faster, reliable</text>
+<text class="dsub" x="776" y="100" text-anchor="middle">• Much fewer big-LLM calls</text>
+<text class="dsub" x="776" y="120" text-anchor="middle">• Higher speed on real tasks</text>
+<text class="dsub" x="776" y="140" text-anchor="middle">• Accuracy backed by</text>
+<text class="dsub" x="776" y="158" text-anchor="middle">  statistical guarantees</text>
+
+<line class="dl" x1="256" y1="102" x2="292" y2="102" marker-end="url(#ovArr)"/>
+<line class="dl" x1="628" y1="102" x2="664" y2="102" marker-end="url(#ovArr)"/>
+</svg>
+
 <div class="stats">
 <div><span class="stat">up to 1,000×</span><br>fewer LLM calls than reference algorithms</div>
-<div><span class="stat">up to 3.6×</span><br>faster than the highest-quality baselines</div>
-<div><span class="stat">4 apps</span><br>fact-checking, BioDEX, search, topic analysis</div>
+<div><span class="stat">up to 3.6×</span><br>faster than highest-quality baselines</div>
+<div><span class="stat">4 real apps</span><br>fact-checking, BioDEX, search, topic analysis</div>
 </div>
-<p class="src">Parts: 1 idea · 2 filter and join · 3 top-k, group-by, system · 4 evaluation and limits.</p>
+
+<p class="src">Roadmap: Part 1 · Core Idea &nbsp;|&nbsp; Part 2 · Filter &amp; Join &nbsp;|&nbsp; Part 3 · Top-k, Group-by &amp; System &nbsp;|&nbsp; Part 4 · Evaluation &amp; Limits</p>
 </section>
 
 <section class="slide" data-part="1">
-<h2>The problem: bulk semantic processing</h2>
-<p class="sub">Section 1</p>
-<p>Many tasks need models orchestrated over a whole corpus: summarize this week's ArXiv papers, extract diagnoses from patient reports, validate hypotheses from meeting transcripts. The hope is an analytics system that does for this what RDBMSes did for tabular data.</p>
+<h2>🚨 The problem: bulk semantic processing</h2>
+<p class="sub">Section 1 · Why existing databases and LLM tools fall short at scale</p>
+<!-- Diagram 1: 3-Stage Evolution -->
+<svg class="diag" viewBox="0 0 900 172" role="img" aria-labelledby="p2DiagTitle">
+<title id="p2DiagTitle">Comparison of Traditional SQL, Current LLM Tools, and LOTUS</title>
+<defs>
+  <marker id="p2Arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0L10 5L0 10z" fill="#5b6675"/>
+  </marker>
+</defs>
+<!-- Step 1: Traditional SQL -->
+<rect class="drej" x="10" y="14" width="260" height="144" rx="8"/>
+<text class="dtxt" x="140" y="38" text-anchor="middle">1 · Traditional SQL</text>
+<text class="dsub" x="140" y="58" text-anchor="middle">Structured data only (numbers/IDs)</text>
+<rect x="26" y="70" width="228" height="26" rx="4" fill="#fff" stroke="#cbd5e1"/>
+<text class="dsub" x="140" y="87" text-anchor="middle" style="fill:#1b2430;font-family:monospace">WHERE price &gt; 100</text>
+<text class="dsub" x="140" y="118" text-anchor="middle">✅ Fast &amp; exact guarantees</text>
+<text class="dsub" x="140" y="138" text-anchor="middle">❌ Blind to unstructured text</text>
+<!-- Step 2: Current LLM Tools -->
+<rect class="dor" x="320" y="14" width="260" height="144" rx="8"/>
+<text class="dtxt" x="450" y="38" text-anchor="middle">2 · Current LLM Tools</text>
+<text class="dsub" x="450" y="58" text-anchor="middle">Reads text, but lacks DB optimizer</text>
+<rect x="336" y="70" width="228" height="26" rx="4" fill="#fff" stroke="#f59e0b"/>
+<text class="dsub" x="450" y="87" text-anchor="middle" style="fill:#b45309;font-weight:600">Join: O(|T₁|·|T₂|) · e.g. 6.1M calls</text>
+<text class="dsub" x="450" y="118" text-anchor="middle">❌ AI UDFs: row-by-row O(N) only</text>
+<text class="dsub" x="450" y="138" text-anchor="middle">❌ DocETL/UQE: no accuracy bound</text>
+<!-- Step 3: LOTUS -->
+<rect class="dacc" x="630" y="14" width="260" height="144" rx="8"/>
+<text class="dtxt" x="760" y="38" text-anchor="middle">3 · LOTUS (This Paper)</text>
+<text class="dsub" x="760" y="58" text-anchor="middle">Declarative AI + DB Optimizer</text>
+<rect x="646" y="70" width="228" height="26" rx="4" fill="#fff" stroke="#0f766e"/>
+<text class="dsub" x="760" y="87" text-anchor="middle" style="fill:#0f766e;font-weight:600">P(Accuracy ≥ γ) ≥ 1 − δ</text>
+<text class="dsub" x="760" y="118" text-anchor="middle">✅ Filter, Join, Top-k, Group-by</text>
+<text class="dsub" x="760" y="138" text-anchor="middle">✅ Up to 1,000× fewer LLM calls</text>
+<line class="dl" x1="270" y1="86" x2="320" y2="86" marker-end="url(#p2Arr)"/>
+<line class="dl" x1="580" y1="86" x2="630" y2="86" marker-end="url(#p2Arr)"/>
+</svg>
+<!-- Visual 2x2 Gap Matrix Table -->
+<table>
+<tr>
+  <th style="width:26%">System Family</th>
+  <th style="width:18%;text-align:center">Multi-Row Ops<br><span style="font-weight:400;font-size:12px">(Join / Top-k)</span></th>
+  <th style="width:22%;text-align:center">Accuracy Guarantee<br><span style="font-weight:400;font-size:12px">P(Acc ≥ γ) ≥ 1 − δ</span></th>
+  <th style="width:34%">What happens in practice?</th>
+</tr>
+<tr>
+  <td><b>Row-by-Row AI UDFs</b><br><span style="font-size:12px;color:#5b6675">Databricks, BigQuery, Snowflake</span></td>
+  <td style="text-align:center;color:#b45309;font-weight:600">❌ No</td>
+  <td style="text-align:center;color:#0f766e;font-weight:600">✅ Exact (100% LLM)</td>
+  <td>Only runs 1-to-1 map/filter; cannot rank or join</td>
+</tr>
+<tr>
+  <td><b>Best-Effort LLM Tools</b><br><span style="font-size:12px;color:#5b6675">DocETL, UQE</span></td>
+  <td style="text-align:center;color:#0f766e;font-weight:600">✅ Yes</td>
+  <td style="text-align:center;color:#b45309;font-weight:600">❌ No (Heuristic)</td>
+  <td>Tunes prompts/embeddings empirically; can silently drop quality</td>
+</tr>
+<tr class="hl">
+  <td><b>LOTUS (Semantic Operators)</b></td>
+  <td style="text-align:center;color:#0f766e;font-weight:600">✅ Yes</td>
+  <td style="text-align:center;color:#0f766e;font-weight:600">✅ Yes (Statistical)</td>
+  <td>Combines cheap proxies + oracle sampling to cut cost safely</td>
+</tr>
+</table>
+<!-- Two Core Research Questions -->
 <div class="grid">
-<div class="box"><h3>Batched-inference primitives</h3><p>AI UDFs in database products and several research systems apply an LLM row by row. They have no ranking, grouping or joining, which need algorithms that compose many model calls.</p></div>
-<div class="box"><h3>Best-effort analytics</h3><p>DocETL and UQE support richer operations but optimize empirically. With no definition of correct behavior, there is no accuracy guarantee.</p></div>
+  <div class="box">
+    <h3>Q1 · Declarative Interface</h3>
+    <p>How to express complex multi-row AI tasks cleanly (like SQL/Pandas) despite ambiguous natural language and LLM outputs?</p>
+  </div>
+  <div class="box">
+    <h3>Q2 · Provable Optimization</h3>
+    <p>How to cut $O(|T|)$ and $O(|T_1|\cdot|T_2|)$ LLM costs while guaranteeing target accuracy $\gamma$ with confidence $1-\delta$?</p>
+  </div>
 </div>
-<p>Two questions follow: how should developers express semantic queries, and how should the engine be built for efficiency and accuracy? The core difficulty is the ambiguity of natural-language instructions and LLM outputs.</p>
 </section>
 
 <section class="slide" data-part="1">
-<h2>What a semantic operator is</h2>
+<h2>🪷From Traditional SQL to Semantic Operators</h2>
+<p class="sub">Three ways to ask a table a question. Only the third mixes free text and rows under one query.</p>
+<div style="overflow-x:auto">
+<table>
+<tr><th>Approach</th><th>Typical syntax</th><th>👍What it does well</th><th>Where it breaks down</th></tr>
+<tr><td><b>👴🏻Traditional SQL</b></td><td><code>WHERE price &gt; 100</code><br><code>JOIN ... ON a.id = b.id</code></td><td>Exact logic and fast execution on large relational tables</td><td>Cannot read or reason over free text such as abstracts or reports</td></tr>
+<tr><td><b>🤖ChatGPT / Text-to-SQL</b></td><td>Translate the question into SQL, or paste a file into a chat prompt</td><td>Friendly natural-language entry point</td><td>Rigid SQL for fuzzy criteria; pasted tables overflow the context window ("lost in the middle"); row-by-row loops are slow and costly; no statistical guarantee</td></tr>
+<tr class="hl"><td><b>🪷LOTUS (semantic operators)</b></td><td><code>df.sem_filter("claims to outperform baseline")</code><br><code>df.sem_join("abstract uses dataset")</code></td><td>Declarative table-level operators parameterized by natural language; an optimizer picks cheap or expensive paths per row</td><td>Accuracy is measured against a reference algorithm, not ground truth; savings depend on proxy quality</td></tr>
+</table>
+</div>
+<div class="def"><b>Takeaway.</b> LOTUS is not a storage system, and it is not just text-to-SQL. It is a <b>query execution and optimization layer</b> over mixed structured and unstructured tables, sitting above your data.</div>
+</section>
+
+<section class="slide" data-part="1">
+<h2>🤔What a semantic operator is</h2>
 <p class="sub">Sections 2.1 to 2.3</p>
 <div class="def"><b>Definition.</b> A semantic operator is a declarative transformation over one or more datasets, parameterized by a natural language expression (<i>langex</i>). Many AI algorithms can implement it; its correct behavior is defined by a <b>reference algorithm</b>.</div>
-<ul>
-<li><b>Model–data independence.</b> Application logic is separated from the AI algorithm that decides which model calls process which records.</li>
-<li><b>World model M.</b> Semantics are defined against a model, in practice the strongest LLM available. E.g. filter returns {t<sub>i</sub> ∈ T : l<sub>M</sub>(t<sub>i</sub>) = 1}.</li>
-<li><b>Reference algorithm.</b> A tractable, high-quality algorithm. Its LLM-call cost is often linear or quadratic in data size.</li>
-</ul>
-<div class="def warn"><b>Correct optimization.</b> An alternative algorithm that reduces cost while meeting an accuracy target γ, relative to the reference algorithm, with probability 1 − δ. This borrows from approximate query processing.</div>
+
+<svg class="diag" viewBox="0 0 900 285" role="img" aria-labelledby="semOpDiagTitle">
+<title id="semOpDiagTitle">Model-data independence: separating declarative specification from reference and optimized execution paths</title>
+<defs>
+  <marker id="soArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+    <path d="M0 0L10 5L0 10z" fill="#5b6675"/>
+  </marker>
+  <marker id="soAccArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+    <path d="M0 0L10 5L0 10z" fill="#0f766e"/>
+  </marker>
+</defs>
+
+<!-- Top Layer: Declarative Specification -->
+<rect class="dacc" x="180" y="12" width="540" height="58" rx="8"/>
+<text class="dtxt" x="450" y="36" text-anchor="middle">1 · Application Layer (What): Semantic Operator + langex</text>
+<text class="dsub" x="450" y="55" text-anchor="middle">Declarative query over dataset T (e.g., sem_filter with natural-language predicate l)</text>
+
+<!-- Separation Line: Model-Data Independence -->
+<line x1="30" y1="96" x2="870" y2="96" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6,5"/>
+<rect x="275" y="83" width="350" height="24" rx="4" fill="#fff"/>
+<text class="dh" x="450" y="99" text-anchor="middle" style="fill:#b45309">2 · Model–Data Independence Boundary</text>
+
+<!-- Arrows branching down -->
+<path class="dl" d="M 330 70 L 330 124 L 225 124 L 225 142" marker-end="url(#soArr)"/>
+<path class="dl" d="M 570 70 L 570 124 L 675 124 L 675 142" marker-end="url(#soArr)"/>
+
+<!-- Left Path: Reference Algorithm + World Model M -->
+<rect class="dbox" x="40" y="144" width="370" height="92" rx="8"/>
+<text class="dtxt" x="225" y="168" text-anchor="middle">3a · Reference Algorithm (Defines Semantics)</text>
+<text class="dsub" x="225" y="188" text-anchor="middle">Uses World Model M (strongest LLM available)</text>
+<text class="dsub" x="225" y="206" text-anchor="middle">Produces reference output: { tᵢ ∈ T : lₘ(tᵢ) = 1 }</text>
+<text class="dsub" x="225" y="224" text-anchor="middle" style="fill:#b45309">High quality, but expensive: O(n) or O(n²) calls</text>
+
+<!-- Right Path: Optimized Algorithm -->
+<rect class="dbox" x="490" y="144" width="370" height="92" rx="8"/>
+<text class="dtxt" x="675" y="168" text-anchor="middle">3b · Optimized Algorithm (Physical Execution)</text>
+<text class="dsub" x="675" y="188" text-anchor="middle">Cheap proxies filter clear cases first;</text>
+<text class="dsub" x="675" y="206" text-anchor="middle">only ambiguous records go to the oracle LLM</text>
+<text class="dsub" x="675" y="224" text-anchor="middle" style="fill:#0f766e">Lower cost &amp; latency</text>
+
+<!-- Comparison Arrow between Reference and Optimized -->
+<line x1="490" y1="190" x2="414" y2="190" stroke="#0f766e" stroke-width="1.8" stroke-dasharray="4,3" marker-end="url(#soAccArr)"/>
+<text class="dsub" x="452" y="176" text-anchor="middle" style="fill:#0f766e;font-weight:600">≥ γ</text>
+<text class="dsub" x="452" y="206" text-anchor="middle" style="fill:#0f766e">prob 1−δ</text>
+
+<text class="dsub" x="450" y="266" text-anchor="middle">The reference defines "what is correct"; an optimization is valid only if it matches the reference within target γ.</text>
+</svg>
+<div class="def warn"><b>Correct optimization.</b> A cheaper alternative algorithm is valid if it meets an accuracy target <b>γ</b> relative to the reference algorithm, with confidence probability <b>1 − δ</b> (adapted from approximate query processing).</div>
 </section>
 
 <section class="slide" data-part="1">
-<h2>An example program</h2>
-<p class="sub">Figure 1: a paper digest in three operator calls</p>
+<h2>An example program: 3 lines instead of 200+</h2>
+<p class="sub">Figure 1: sem_search, sem_filter, and sem_agg are built-in LOTUS methods—you supply the natural-language criteria</p>
+<div class="grid">
+<div class="box"><h3>Before: manual LLM script</h3>
+<ul>
+<li>About 200+ lines of prompt templates, batching loops and retry logic.</li>
+<li>Vector index and glue code to connect search results to LLM calls.</li>
+<li>Every row goes to the LLM, so cost scales with the whole corpus.</li>
+<li>Threshold picked by hand; accuracy is <b>unverified</b>.</li>
+</ul></div>
+<div class="box"><h3>After: LOTUS built-in operators (3 lines)</h3>
+<ul>
+<li>No need to implement the operators—call LOTUS methods like DataFrame functions and pass your natural-language instructions.</li>
+<li>The engine routes easy rows to a cheap proxy and hard rows to the oracle LLM.</li>
+<li>Each operator supports accuracy targets with a statistical guarantee against the reference.</li>
+</ul></div>
+</div>
 <pre><code>def paper_digest(research_interest, baseline):
     return papers_df \
       .<span class="k">sem_search</span>(abstracts, research_interest, K=100) \
       .<span class="k">sem_filter</span>(<span class="s">f"the paper {{abstracts}} claim to outperform {baseline}"</span>) \
       .<span class="k">sem_agg</span>(<span class="s">f"Write a digest summarizing {{abstracts}} and their relevance to {research_interest}"</span>)</code></pre>
 <div class="flow"><span>sem_search (top-k by similarity)</span><i>→</i><span>sem_filter (natural-language predicate)</span><i>→</i><span>sem_agg (summary)</span></div>
-<p>The programmer writes <i>what</i> is wanted. A naive filter would call the LLM once per record; the engine may instead use a lightweight model or vector index for some records and reserve the LLM for the rest, transparently and with guarantees.</p>
+<p class="src">Operators are provided by LOTUS; the developer writes <i>what</i> is wanted, while the engine decides <i>how</i> to execute and optimize it.</p>
+</section>
+
+<section class="slide" data-part="1">
+<h2>Tracing papers through the pipeline</h2>
+<p class="sub">Step-by-step walkthrough: how candidate papers move from search to filter to summary</p>
+
+<svg class="diag" viewBox="0 0 900 225" role="img" aria-labelledby="tracePipeTitle">
+<title id="tracePipeTitle">Three-stage pipeline from sem_search to sem_filter cascade to sem_agg digest</title>
+<defs>
+  <marker id="trArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+    <path d="M0 0L10 5L0 10z" fill="#5b6675"/>
+  </marker>
+</defs>
+
+<rect class="dbox" x="15" y="18" width="235" height="175" rx="8"/>
+<text class="dh" x="132" y="44" text-anchor="middle">1 · sem_search</text>
+<text class="dtxt" x="132" y="70" text-anchor="middle">Narrow to Top K = 100</text>
+<text class="dsub" x="132" y="92" text-anchor="middle">Compare paper abstracts with</text>
+<text class="dsub" x="132" y="110" text-anchor="middle">research_interest via vectors.</text>
+<text class="dsub" x="132" y="142" text-anchor="middle">Drops off-topic papers early</text>
+<text class="dsub" x="132" y="160" text-anchor="middle">without calling a heavy LLM.</text>
+
+<rect class="dbox" x="285" y="18" width="330" height="175" rx="8"/>
+<text class="dh" x="450" y="44" text-anchor="middle">2 · sem_filter (Proxy + Thresholds)</text>
+<text class="dtxt" x="450" y="70" text-anchor="middle">Does it beat the baseline?</text>
+<rect class="dacc" x="302" y="86" width="296" height="28" rx="5"/>
+<text class="dsub" x="450" x2="450" y="105" text-anchor="middle" style="fill:#1b2430">Score ≥ τ⁺ → ✅Keep (cheap proxy only)</text>
+<rect class="dor" x="302" y="120" width="296" height="28" rx="5"/>
+<text class="dsub" x="450" y="139" text-anchor="middle" style="fill:#1b2430">τ⁻ &lt; Score &lt; τ⁺ → ❓Ask big LLM (oracle)</text>
+<rect class="drej" x="302" y="154" width="296" height="28" rx="5"/>
+<text class="dsub" x="450" y="173" text-anchor="middle" style="fill:#1b2430">Score ≤ τ⁻ → ⚠️Drop (cheap proxy only)</text>
+
+<rect class="dacc" x="650" y="18" width="235" height="175" rx="8"/>
+<text class="dh" x="767" y="44" text-anchor="middle">3 · sem_agg</text>
+<text class="dtxt" x="767" y="70" text-anchor="middle">Write one final digest</text>
+<text class="dsub" x="767" y="92" text-anchor="middle">Takes only the papers that</text>
+<text class="dsub" x="767" y="110" text-anchor="middle">passed sem_filter.</text>
+<text class="dsub" x="767" y="142" text-anchor="middle">Combines them into a clean</text>
+<text class="dsub" x="767" y="160" text-anchor="middle">summary tied to your topic.</text>
+
+<line class="dl" x1="250" y1="105" x2="285" y2="105" marker-end="url(#trArr)"/>
+<line class="dl" x1="615" y1="105" x2="650" y2="105" marker-end="url(#trArr)"/>
+</svg>
+
+<h3>Example: three papers entering <code>sem_filter</code></h3>
+<div style="overflow-x:auto">
+<table>
+<tr><th>Paper</th><th>What the abstract says</th><th>Proxy view vs. cutoffs</th><th>What happens next</th></tr>
+<tr><td><b>Sparse Retrieval Revisited</b></td><td>"Reports a +4-point gain over the BM25 baseline."</td><td>Clear match → score ≥ <b>τ⁺</b></td><td><b>✅Keep</b> — sent straight to <code>sem_agg</code>; saves big-LLM cost</td></tr>
+<tr><td><b>A Survey of Graph Layouts</b></td><td>"Reviews layout algorithms; no baseline claim."</td><td>Clear non-match → score ≤ <b>τ⁻</b></td><td><b>⚠️Drop</b> — removed before <code>sem_agg</code>; no big-LLM call</td></tr>
+<tr><td><b>Tighter Bounds for Sketching</b></td><td>"Mentions gains, but states results are unclear."</td><td>Borderline → between <b>τ⁻</b> and <b>τ⁺</b></td><td><b>❓Ask oracle LLM</b> — big model checks; kept only if yes</td></tr>
+</table>
+</div>
+
+<div class="def"><b>Why this design helps:</b> Easy "yes" and "no" papers are handled cheaply without paying for the strongest LLM on every row, while tricky borderline papers still get checked by the stronger model.</div>
+<p class="src">Illustrative example adapted from Figure 1 and Section 3.1 cascade routing. (Note: Figure 1 writes <code>abstracts</code>, while §2.1 refers to the <code>abstract</code> attribute.)</p>
 </section>
 
 <section class="slide" data-part="1">
 <h2>Core operators (Table 1)</h2>
-<p class="sub">T is a relation; M is the model; l is a langex</p>
+<p class="sub">Formal semantics (left), reference execution &amp; cost (right) — Section 2.1 &amp; Table 1</p>
+<div class="stats">
+<div><span class="stat" style="font-size:22px;">T = {t₁, …, tₙ}</span><br>input relation (set of tuples)</div>
+<div><span class="stat" style="font-size:22px;">M</span><br>world model (oracle LLM — strongest LLM)</div>
+<div><span class="stat" style="font-size:22px;">l</span><br><i>langex</i> (natural-language prompt)</div>
+</div>
 <table>
-<tr><th>Operator</th><th>Behavior</th><th>Reference algorithm</th></tr>
-<tr><td><code>sem_filter</code></td><td>Tuples that pass the langex predicate</td><td>Evaluate l<sub>M</sub>(t<sub>i</sub>) for each tuple</td></tr>
-<tr><td><code>sem_join</code></td><td>Pairs from T<sub>1</sub> × T<sub>2</sub> passing the predicate</td><td>Evaluate every pair (nested loop)</td></tr>
-<tr><td><code>sem_agg</code></td><td>Many-to-one reduce with a commutative, associative langex</td><td>Hierarchical reduce</td></tr>
-<tr><td><code>sem_topk</code></td><td>Ordered list of the k best tuples by a ranking langex</td><td>Quick-select with pairwise LLM comparisons</td></tr>
-<tr><td><code>sem_group_by</code></td><td>Assign tuples to C groups, maximizing the sum of best group scores</td><td>Cluster to find labels, then pointwise assignment</td></tr>
+<tr>
+  <th style="width:15%">Operator</th>
+  <th style="width:33%">Formal Semantics (Output)</th>
+  <th style="width:34%">Reference Algorithm</th>
+  <th class="n" style="width:18%">LLM Calls</th>
+</tr>
+<tr>
+  <td><code>sem_filter</code></td>
+  <td><code>{ tᵢ ∈ T : l<sub>M</sub>(tᵢ) = 1 }</code><br><span style="font-size:13px;color:var(--mute)">Keep tuples passing predicate</span></td>
+  <td>Evaluate <code>l<sub>M</sub>(tᵢ)</code> per tuple</td>
+  <td class="n"><code>O(|T|)</code></td>
+</tr>
+<tr>
+  <td><code>sem_join</code></td>
+  <td><code>{ (t₁, t₂) ∈ T₁×T₂ : l<sub>M</sub>(t₁, t₂) = 1 }</code><br><span style="font-size:13px;color:var(--mute)">Matching pairs across two tables</span></td>
+  <td>Evaluate every pair (nested loop)</td>
+  <td class="n"><code>O(|T₁|·|T₂|)</code></td>
+</tr>
+<tr>
+  <td><code>sem_agg</code></td>
+  <td><code>l<sub>M</sub>(T)</code> <span style="font-size:13px;color:var(--mute)">(commutative &amp; associative)</span><br><span style="font-size:13px;color:var(--mute)">Many-to-one reduction</span></td>
+  <td>Hierarchical tree reduce</td>
+  <td class="n"><code>O(|T|)</code></td>
+</tr>
+<tr>
+  <td><code>sem_topk</code></td>
+  <td><code>arg top-k<sub>tᵢ ∈ T</sub> (l<sub>M</sub>)</code><br><span style="font-size:13px;color:var(--mute)">Ordered top-k list by ranking langex</span></td>
+  <td>Quick-select with pairwise <code>M</code> comparisons</td>
+  <td class="n"><code>O(|T|)</code> exp.</td>
+</tr>
+<tr>
+  <td><code>sem_group_by</code></td>
+  <td><code>arg max<sub>|Y|=C</sub> ∑<sub>i</sub> max<sub>y∈Y</sub> s<sub>M</sub>(tᵢ, y, l)</code><br><span style="font-size:13px;color:var(--mute)">Pick C labels maximizing best match score</span></td>
+  <td>Cluster candidate labels → pointwise assign</td>
+  <td class="n"><code>O(|T|·C)</code></td>
+</tr>
 </table>
-<p>Operators accept optional accuracy targets. <code>sem_map</code> (per-tuple projection) follows the same per-tuple pattern as <code>sem_filter</code>. Top-k and group-by use a total ordering or a model score; the paper notes this can be softened to partial orders and noisy comparisons.</p>
+<div class="grid">
+<div class="box">
+  <h3>Per-tuple projection: <code>sem_map</code></h3>
+  <p style="margin:0;font-size:15px">Maps each tuple to a new value <code>{ l<sub>M</sub>(tᵢ) : tᵢ ∈ T }</code>; follows the exact same <code>O(|T|)</code> per-tuple pattern as <code>sem_filter</code>.</p>
+</div>
+<div class="box">
+  <h3>Relaxations &amp; Guarantees</h3>
+  <p style="margin:0;font-size:15px">All operators accept optional accuracy targets <code>(γ, δ)</code>. Total ordering in <code>sem_topk</code> / <code>sem_group_by</code> can soften to partial orders with noisy LLM comparisons.</p>
+</div>
+</div>
 </section>
 
 <section class="slide" data-part="1">
 <h2>Semantic aggregation</h2>
 <p class="sub">Section 2.4 (reference algorithm only; optimization is not studied in this paper)</p>
 <ul>
-<li><b>Langex</b> is a commutative, associative aggregation, applicable to any subset of rows. Finite context is an implementation detail.</li>
-<li><b>Fold:</b> a linear pass, acc<sub>i</sub> = M({acc<sub>i−1</sub>, t<sub>i</sub>}, l). Sequential.</li>
-<li><b>Hierarchical reduce (chosen):</b> combine n inputs per round until one answer remains. Prior work found higher quality for summarization, and it parallelizes.</li>
-<li>Input order inside a prompt can affect quality, so LOTUS exposes a <code>partitioner</code> function to override commutativity.</li>
+<li><b>Langex</b> is a commutative, associative aggregation over subsets of tuples; finite context window is an implementation detail.</li>
+<li><b>Fold (sequential):</b> updates state one tuple at a time via <code>acc<sub>i</sub> = M({acc<sub>i−1</sub>, t<sub>i</sub>}, l)</code> over <code>i = 1..|T|</code> (<code>|T|</code> sequential steps).</li>
+<li><b>Hierarchical reduce (chosen):</b> partitions inputs into groups of size <code>n</code> per round, computes partial results in parallel, and repeats for <code>⌈log<sub>n</sub> |T|⌉</code> rounds until one output remains.</li>
+<li>Prompt order can still affect outputs in practice, so LOTUS provides a <code>partitioner</code> hook to override commutativity when needed.</li>
 </ul>
-<div class="flow"><span>t₁ t₂ t₃</span><span>t₄ t₅ t₆</span><span>t₇ t₈ t₉</span><i>→ round 1 →</i><span>a₁</span><span>a₂</span><span>a₃</span><i>→ round 2 →</i><span>final answer</span></div>
+
+<svg class="diag" viewBox="0 0 900 220" role="img" aria-labelledby="aggTreeTitle">
+<title id="aggTreeTitle">Hierarchical reduce tree over 9 items with group size n = 3 in two parallel rounds</title>
+<defs>
+  <marker id="agArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+    <path d="M0 0L10 5L0 10z" fill="#5b6675"/>
+  </marker>
+</defs>
+
+<text class="dh" x="20" y="24">Input |T| = 9, group n = 3</text>
+<text class="dh" x="395" y="24" text-anchor="middle">Round 1: ⌈9/3⌉ = 3 parallel calls</text>
+<text class="dh" x="765" y="24" text-anchor="middle">Round 2: ⌈3/3⌉ = 1 call</text>
+
+<rect class="dbox" x="20" y="38" width="165" height="36" rx="6"/>
+<text class="dtxt" x="102" y="61" text-anchor="middle">{t₁, t₂, t₃}</text>
+
+<rect class="dbox" x="20" y="92" width="165" height="36" rx="6"/>
+<text class="dtxt" x="102" y="115" text-anchor="middle">{t₄, t₅, t₆}</text>
+
+<rect class="dbox" x="20" y="146" width="165" height="36" rx="6"/>
+<text class="dtxt" x="102" y="169" text-anchor="middle">{t₇, t₈, t₉}</text>
+
+<rect class="dbox" x="315" y="38" width="160" height="36" rx="6"/>
+<text class="dtxt" x="395" y="61" text-anchor="middle">a₁ = M({t₁..t₃}, l)</text>
+
+<rect class="dbox" x="315" y="92" width="160" height="36" rx="6"/>
+<text class="dtxt" x="395" y="115" text-anchor="middle">a₂ = M({t₄..t₆}, l)</text>
+
+<rect class="dbox" x="315" y="146" width="160" height="36" rx="6"/>
+<text class="dtxt" x="395" y="169" text-anchor="middle">a₃ = M({t₇..t₉}, l)</text>
+
+<rect class="dacc" x="650" y="84" width="230" height="52" rx="8"/>
+<text class="dtxt" x="765" y="106" text-anchor="middle">final = M({a₁, a₂, a₃}, l)</text>
+<text class="dsub" x="765" y="125" text-anchor="middle">total rounds: ⌈log₃ 9⌉ = 2</text>
+
+<line class="dl" x1="185" y1="56" x2="315" y2="56" marker-end="url(#agArr)"/>
+<line class="dl" x1="185" y1="110" x2="315" y2="110" marker-end="url(#agArr)"/>
+<line class="dl" x1="185" y1="164" x2="315" y2="164" marker-end="url(#agArr)"/>
+
+<line class="dl" x1="475" y1="56" x2="650" y2="100" marker-end="url(#agArr)"/>
+<line class="dl" x1="475" y1="110" x2="650" y2="110" marker-end="url(#agArr)"/>
+<line class="dl" x1="475" y1="164" x2="650" y2="120" marker-end="url(#agArr)"/>
+
+<text class="dsub" x="20" y="206">Note: This paper defines the reference aggregation algorithm; optimizing sem_agg is left to future work.</text>
+</svg>
 </section>
 
 <!-- PART 2 -->
 <section class="slide" data-part="2">
 <h2>Why filter and join are expensive</h2>
-<p class="sub">Reference algorithms, Section 2.4</p>
+<p class="sub">Reference algorithms (Section 2.4) and optimization targets</p>
+
 <div class="grid">
-<div class="box"><h3>Semantic filter</h3><p>One batched LLM call per tuple: the predicate plus an instruction to emit a boolean. Rows are processed independently, avoiding long-context failures such as "lost in the middle". Cost: O(|T|) calls.</p></div>
-<div class="box"><h3>Semantic join</h3><p>Nested loop: one predicate call per pair in T<sub>1</sub> × T<sub>2</sub>. Cost: O(|T<sub>1</sub>|·|T<sub>2</sub>|) calls.</p></div>
+  <div class="box">
+    <h3>Semantic filter · cost O(|T|)</h3>
+    <p>One batched LLM call per tuple (predicate + boolean rule). Rows run independently to avoid "lost in the middle" context errors.</p>
+    <table>
+      <tr><th>Table size |T|</th><th class="n">Max LLM calls</th></tr>
+      <tr><td>1,000 rows</td><td class="n">1,000</td></tr>
+      <tr><td>100,000 rows</td><td class="n">100,000</td></tr>
+    </table>
+  </div>
+  <div class="box">
+    <h3>Semantic join · cost O(|T<sub>1</sub>|·|T<sub>2</sub>|)</h3>
+    <p>Nested loop over T<sub>1</sub> × T<sub>2</sub>: one call per pair. Cost grows quadratically as either table gets bigger.</p>
+    <table>
+      <tr><th>|T<sub>1</sub>| × |T<sub>2</sub>|</th><th class="n">Max LLM calls</th></tr>
+      <tr><td>1,000 × 1,000</td><td class="n">1,000,000</td></tr>
+      <tr><td>10,000 × 10,000</td><td class="n">100,000,000</td></tr>
+    </table>
+  </div>
 </div>
-<p>Goal for both: meet recall target γ<sub>R</sub> and precision target γ<sub>P</sub>, relative to the reference output, with probability 1 − δ, while calling the oracle LLM as little as possible.</p>
-<div class="def warn">The proxy may be poor on some tasks or records. The algorithm therefore <b>measures proxy quality at query time</b> by sampling and comparing to the oracle, and defers to the oracle when the proxy cannot be trusted.</div>
+
+<svg class="diag" viewBox="0 0 900 132" role="img" aria-labelledby="costScaleTitle">
+  <title id="costScaleTitle">Visual comparison of linear filter cost versus quadratic join cost</title>
+  <text class="dh" x="16" y="24">How fast LLM calls grow (log-style visual scale)</text>
+
+  <text class="dtxt" x="16" y="54">Filter O(|T|) · 1k rows</text>
+  <rect class="dacc" x="235" y="38" width="90" height="22" rx="4"/>
+  <text class="dsub" x="335" y="54">10³ calls</text>
+
+  <text class="dtxt" x="16" y="84">Join O(|T₁|·|T₂|) · 1k × 1k</text>
+  <rect class="dor" x="235" y="68" width="360" height="22" rx="4"/>
+  <text class="dsub" x="605" y="84">10⁶ calls (1,000× more)</text>
+
+  <text class="dtxt" x="16" y="114">Join O(|T₁|·|T₂|) · 10k × 10k</text>
+  <rect class="dor" x="235" y="98" width="540" height="22" rx="4"/>
+  <text class="dsub" x="785" y="114">10⁸ calls</text>
+</svg>
+
+<div class="def">
+  <b>Optimization goal:</b> Cut calls to the expensive oracle LLM while meeting targets relative to the reference output with probability ≥ <b>1 − δ</b>:
+  <ul>
+    <li><b>Recall target (γ<sub>R</sub>):</b> share of reference-true items kept by the plan.</li>
+    <li><b>Precision target (γ<sub>P</sub>):</b> share of plan-kept items that are also reference-true.</li>
+  </ul>
+</div>
+
+<div class="def warn">
+  <b>Why check proxy at query time?</b> Cheap proxies (small LLMs or embedding similarity) can be noisy on some data. LOTUS <b>estimates proxy quality at query time</b> via sampling against the oracle and sends uncertain items to the oracle to keep the <b>(γ<sub>R</sub>, γ<sub>P</sub>, 1 − δ)</b> guarantee.
+</div>
 </section>
 
 <section class="slide" data-part="2">
 <h2>Optimizing semantic filter: a guaranteed cascade</h2>
-<p class="sub">Section 3.1, Algorithm 1: thresholds learned on a cheap proxy, checked against the oracle</p>
-<svg class="diag" viewBox="0 0 900 340" role="img" aria-labelledby="filterDiagTitle">
-<title id="filterDiagTitle">Semantic filter cascade: sample, label, learn thresholds, route tuples</title>
-<defs><marker id="fArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5b6675"/></marker></defs>
+<p class="sub">Section 3.1, Algorithm 1: cheap proxy scores + statistical thresholds + oracle fallback</p>
 
-<rect class="dbox" x="10" y="12" width="190" height="76" rx="8"/>
-<text class="dtxt" x="105" y="38" text-anchor="middle">1 · Sample</text>
-<text class="dsub" x="105" y="58" text-anchor="middle">importance (√ proxy) mixed</text>
-<text class="dsub" x="105" y="74" text-anchor="middle">with a uniform sample</text>
+<svg class="diag" viewBox="0 0 900 352" role="img" aria-labelledby="filterDiagTitle">
+  <title id="filterDiagTitle">Semantic filter cascade: sample, label, learn thresholds, route tuples</title>
+  <defs><marker id="fArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5b6675"/></marker></defs>
 
-<rect class="dbox" x="240" y="12" width="190" height="76" rx="8"/>
-<text class="dtxt" x="335" y="38" text-anchor="middle">2 · Label the sample</text>
-<text class="dsub" x="335" y="58" text-anchor="middle">oracle LLM + proxy LLM</text>
-<text class="dsub" x="335" y="74" text-anchor="middle">on each sampled tuple</text>
+  <rect class="dbox" x="10" y="12" width="190" height="78" rx="8"/>
+  <text class="dtxt" x="105" y="36" text-anchor="middle">1 · Sample</text>
+  <text class="dsub" x="105" y="55" text-anchor="middle">importance (√ proxy)</text>
+  <text class="dsub" x="105" y="72" text-anchor="middle">+ uniform sample</text>
 
-<rect class="dbox" x="470" y="12" width="190" height="76" rx="8"/>
-<text class="dtxt" x="565" y="38" text-anchor="middle">3 · Learn thresholds</text>
-<text class="dsub" x="565" y="58" text-anchor="middle">τ⁺ precision target, δ/2</text>
-<text class="dsub" x="565" y="74" text-anchor="middle">τ⁻ recall target, δ/2</text>
+  <rect class="dbox" x="240" y="12" width="190" height="78" rx="8"/>
+  <text class="dtxt" x="335" y="36" text-anchor="middle">2 · Label sample</text>
+  <text class="dsub" x="335" y="55" text-anchor="middle">run both proxy &amp; oracle</text>
+  <text class="dsub" x="335" y="72" text-anchor="middle">on sampled rows</text>
 
-<rect class="dbox" x="700" y="12" width="190" height="76" rx="8"/>
-<text class="dtxt" x="795" y="38" text-anchor="middle">4 · Route all tuples</text>
-<text class="dsub" x="795" y="58" text-anchor="middle">τ⁺ ← max(τ⁺, τ⁻)</text>
-<text class="dsub" x="795" y="74" text-anchor="middle">oracle only for mid-band</text>
+  <rect class="dbox" x="470" y="12" width="190" height="78" rx="8"/>
+  <text class="dtxt" x="565" y="36" text-anchor="middle">3 · Learn cutoffs</text>
+  <text class="dsub" x="565" y="55" text-anchor="middle">τ⁻ for recall (budget δ/2)</text>
+  <text class="dsub" x="565" y="72" text-anchor="middle">τ⁺ for precision (budget δ/2)</text>
 
-<line class="dl" x1="200" y1="50" x2="240" y2="50" marker-end="url(#fArr)"/>
-<line class="dl" x1="430" y1="50" x2="470" y2="50" marker-end="url(#fArr)"/>
-<line class="dl" x1="660" y1="50" x2="700" y2="50" marker-end="url(#fArr)"/>
+  <rect class="dbox" x="700" y="12" width="190" height="78" rx="8"/>
+  <text class="dtxt" x="795" y="36" text-anchor="middle">4 · Route all rows</text>
+  <text class="dsub" x="795" y="55" text-anchor="middle">τ⁺ ← max(τ⁺, τ⁻)</text>
+  <text class="dsub" x="795" y="72" text-anchor="middle">oracle only in mid-band</text>
 
-<text class="dsub" x="60" y="128">Proxy score (q = 50 quantile bins)</text>
-<rect class="drej" x="60" y="150" width="300" height="52"/>
-<rect class="dor" x="360" y="150" width="260" height="52"/>
-<rect class="dacc" x="620" y="150" width="220" height="52"/>
-<text class="dtxt" x="210" y="172" text-anchor="middle">reject</text>
-<text class="dsub" x="210" y="190" text-anchor="middle">no oracle call</text>
-<text class="dtxt" x="490" y="172" text-anchor="middle">oracle LLM</text>
-<text class="dsub" x="490" y="190" text-anchor="middle">mid-band tuples</text>
-<text class="dtxt" x="730" y="172" text-anchor="middle">accept</text>
-<text class="dsub" x="730" y="190" text-anchor="middle">no oracle call</text>
+  <line class="dl" x1="200" y1="51" x2="240" y2="51" marker-end="url(#fArr)"/>
+  <line class="dl" x1="430" y1="51" x2="470" y2="51" marker-end="url(#fArr)"/>
+  <line class="dl" x1="660" y1="51" x2="700" y2="51" marker-end="url(#fArr)"/>
 
-<line class="dtick" x1="360" y1="140" x2="360" y2="212"/>
-<line class="dtick" x1="620" y1="140" x2="620" y2="212"/>
-<text class="dh" x="360" y="134" text-anchor="middle">τ⁻</text>
-<text class="dh" x="620" y="134" text-anchor="middle">τ⁺</text>
-<text class="dsub" x="360" y="230" text-anchor="middle">recall bound, δ/2</text>
-<text class="dsub" x="620" y="230" text-anchor="middle">precision bound, δ/2</text>
-<text class="dsub" x="60" y="230">0</text>
-<text class="dsub" x="840" y="230" text-anchor="end">1</text>
+  <text class="dsub" x="60" y="126">Proxy score (log-prob of True/False, binned into q = 50 quantiles)</text>
+  <rect class="drej" x="60" y="148" width="290" height="54"/>
+  <rect class="dor" x="350" y="148" width="270" height="54"/>
+  <rect class="dacc" x="620" y="148" width="220" height="54"/>
+  <text class="dtxt" x="205" y="170" text-anchor="middle">Reject (FALSE)</text>
+  <text class="dsub" x="205" y="189" text-anchor="middle">0 oracle calls</text>
+  <text class="dtxt" x="485" y="170" text-anchor="middle">Oracle LLM</text>
+  <text class="dsub" x="485" y="189" text-anchor="middle">uncertain middle band</text>
+  <text class="dtxt" x="730" y="170" text-anchor="middle">Accept (TRUE)</text>
+  <text class="dsub" x="730" y="189" text-anchor="middle">0 oracle calls</text>
 
-<text class="dtxt" x="210" y="276" text-anchor="middle">score ≤ τ⁻ → FALSE</text>
-<text class="dtxt" x="490" y="276" text-anchor="middle">between τ⁻ and τ⁺ → oracle</text>
-<text class="dtxt" x="730" y="276" text-anchor="middle">score ≥ τ⁺ → TRUE</text>
+  <line class="dtick" x1="350" y1="138" x2="350" y2="212"/>
+  <line class="dtick" x1="620" y1="138" x2="620" y2="212"/>
+  <text class="dh" x="350" y="132" text-anchor="middle">τ⁻</text>
+  <text class="dh" x="620" y="132" text-anchor="middle">τ⁺</text>
+  <text class="dsub" x="350" y="230" text-anchor="middle">recall cutoff (error ≤ δ/2)</text>
+  <text class="dsub" x="620" y="230" text-anchor="middle">precision cutoff (error ≤ δ/2)</text>
+  <text class="dsub" x="60" y="230">Low score</text>
+  <text class="dsub" x="840" y="230" text-anchor="end">High score</text>
 
-<text class="dsub" x="60" y="318">Thresholds are learned at query time, so a weak proxy only sends more tuples to the oracle.</text>
+  <text class="dtxt" x="205" y="276" text-anchor="middle">score ≤ τ⁻ → drop</text>
+  <text class="dtxt" x="485" y="276" text-anchor="middle">τ⁻ &lt; score &lt; τ⁺ → ask oracle</text>
+  <text class="dtxt" x="730" y="276" text-anchor="middle">score ≥ τ⁺ → keep</text>
+
+  <text class="dsub" x="60" y="324">Weak proxy → wider middle band → more oracle calls, but the statistical guarantee still holds.</text>
 </svg>
 
-<ul>
-<li><b>Proxy score:</b> a small LLM (Llama-8B) predicts the predicate. The score is the log-probability of the True or False token, binned into q = 50 quantiles.</li>
-<li><b>Sampling:</b> importance sampling (weights from √ proxy score, following Kang et al.) mixed with a uniform sample. Default size: the larger of 1% of the data and 100; evaluation uses 0.01% with a floor of 100.</li>
-<li><b>Thresholds:</b> the central limit theorem gives τ⁺ (precision) and τ⁻ (recall), each at δ/2, with a correction for multiple hypothesis tests. Then set τ⁺ to max(τ⁺, τ⁻).</li>
-<li><b>Versus earlier cascades:</b> this targets filters only, so light scoring suffices. Without log-probabilities, other uncertainty estimates would be needed.</li>
-</ul>
+<table>
+  <tr><th>Component</th><th>How it works &amp; key math</th></tr>
+  <tr><td><b>Proxy score</b></td><td>Small LLM (e.g., Llama-8B) outputs log-prob of <code>True</code>/<code>False</code> token, split into <b>q = 50</b> quantile bins.</td></tr>
+  <tr><td><b>Sampling</b></td><td>Importance sampling (weight ∝ <b>√ proxy score</b>, Kang et al.) + uniform sample. Default: max(1% of rows, 100); eval: 0.01% (min 100).</td></tr>
+  <tr><td><b>Cutoffs (τ⁻, τ⁺)</b></td><td>Central limit theorem + normal approx. + multiple-test correction, split error budget <b>δ/2</b> each; enforce <b>τ⁺ ← max(τ⁺, τ⁻)</b>.</td></tr>
+  <tr><td><b>Why lighter?</b></td><td>Built specifically for boolean filters, so token log-prob is enough without heavy uncertainty models.</td></tr>
+</table>
 </section>
 
 <section class="slide" data-part="2">
 <h2>Optimizing semantic join</h2>
-<p class="sub">Section 3.2: same guarantee form, but the proxy must be far cheaper than an LLM over n² pairs</p>
-<svg class="diag" viewBox="0 0 900 360" role="img" aria-labelledby="joinDiagTitle">
+<p class="sub">Section 3.2: avoiding O(|T₁|·|T₂|) LLM calls while keeping Pr[Recall ≥ γ<sub>R</sub> ∧ Precision ≥ γ<sub>P</sub>] ≥ 1 − δ</p>
+
+<svg class="diag" viewBox="0 0 900 365" role="img" aria-labelledby="joinDiagTitle">
 <title id="joinDiagTitle">Semantic join candidate plans: sim-filter versus project-sim-filter, then sample-based plan selection</title>
 <defs><marker id="jArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5b6675"/></marker></defs>
 
-<text class="dh" x="5" y="18">Plan 1 · sim-filter</text>
-<rect class="dbox" x="5" y="28" width="150" height="76" rx="8"/>
-<text class="dtxt" x="80" y="54" text-anchor="middle">Embed join keys</text>
-<text class="dsub" x="80" y="72" text-anchor="middle">both key columns</text>
-<text class="dsub" x="80" y="88" text-anchor="middle">embedding (E5)</text>
-<rect class="dbox" x="190" y="28" width="150" height="76" rx="8"/>
-<text class="dtxt" x="265" y="54" text-anchor="middle">Similarity search</text>
-<text class="dsub" x="265" y="72" text-anchor="middle">batched similarity</text>
-<text class="dsub" x="265" y="88" text-anchor="middle">search over right keys</text>
-<rect class="dbox" x="375" y="28" width="150" height="76" rx="8"/>
-<text class="dtxt" x="450" y="54" text-anchor="middle">Proxy score s₁</text>
-<text class="dsub" x="450" y="72" text-anchor="middle">embedding similarity</text>
-<text class="dsub" x="450" y="88" text-anchor="middle">quantile-calibrated</text>
-<rect class="dbox" x="560" y="28" width="150" height="76" rx="8"/>
-<text class="dtxt" x="635" y="54" text-anchor="middle">Threshold routing</text>
-<text class="dsub" x="635" y="72" text-anchor="middle">confident: use score</text>
-<text class="dsub" x="635" y="88" text-anchor="middle">uncertain: go to LLM</text>
-<rect class="dor" x="745" y="28" width="150" height="76" rx="8"/>
-<text class="dtxt" x="820" y="54" text-anchor="middle">Oracle LLM</text>
-<text class="dsub" x="820" y="72" text-anchor="middle">predicate on uncertain</text>
+<text class="dh" x="5" y="18">Plan 1 · sim-filter (direct embedding similarity — O(|T₁| + |T₂|) embeddings)</text>
+<rect class="dbox" x="5" y="28" width="150" height="72" rx="8"/>
+<text class="dtxt" x="80" y="54" text-anchor="middle">1. Embed keys</text>
+<text class="dsub" x="80" y="72" text-anchor="middle">Left &amp; right keys</text>
+<text class="dsub" x="80" y="88" text-anchor="middle">via E5 vectors</text>
+
+<rect class="dbox" x="190" y="28" width="150" height="72" rx="8"/>
+<text class="dtxt" x="265" y="54" text-anchor="middle">2. Vector search</text>
+<text class="dsub" x="265" y="72" text-anchor="middle">Batched similarity</text>
+<text class="dsub" x="265" y="88" text-anchor="middle">across right keys</text>
+
+<rect class="dbox" x="375" y="28" width="150" height="72" rx="8"/>
+<text class="dtxt" x="450" y="54" text-anchor="middle">3. Proxy score s₁</text>
+<text class="dsub" x="450" y="72" text-anchor="middle">Cosine similarity</text>
+<text class="dsub" x="450" y="88" text-anchor="middle">binned to quantiles</text>
+
+<rect class="dbox" x="560" y="28" width="150" height="72" rx="8"/>
+<text class="dtxt" x="635" y="54" text-anchor="middle">4. Route by τ⁻, τ⁺</text>
+<text class="dsub" x="635" y="72" text-anchor="middle">s₁ ≥ τ⁺ or ≤ τ⁻: done</text>
+<text class="dsub" x="635" y="88" text-anchor="middle">mid-band: send to LLM</text>
+
+<rect class="dor" x="745" y="28" width="150" height="72" rx="8"/>
+<text class="dtxt" x="820" y="54" text-anchor="middle">5. Oracle LLM</text>
+<text class="dsub" x="820" y="72" text-anchor="middle">Verify uncertain</text>
 <text class="dsub" x="820" y="88" text-anchor="middle">pairs only</text>
-<line class="dl" x1="155" y1="66" x2="190" y2="66" marker-end="url(#jArr)"/>
-<line class="dl" x1="340" y1="66" x2="375" y2="66" marker-end="url(#jArr)"/>
-<line class="dl" x1="525" y1="66" x2="560" y2="66" marker-end="url(#jArr)"/>
-<line class="dl" x1="710" y1="66" x2="745" y2="66" marker-end="url(#jArr)"/>
 
-<text class="dh" x="5" y="138">Plan 2 · project-sim-filter (chosen on BioDEX)</text>
-<rect class="dbox" x="5" y="148" width="150" height="76" rx="8"/>
-<text class="dtxt" x="80" y="174" text-anchor="middle">LLM projection</text>
-<text class="dsub" x="80" y="192" text-anchor="middle">parallel sem_map</text>
-<text class="dsub" x="80" y="208" text-anchor="middle">no right-domain info</text>
-<rect class="dbox" x="190" y="148" width="150" height="76" rx="8"/>
-<text class="dtxt" x="265" y="174" text-anchor="middle">Embed projection</text>
-<text class="dsub" x="265" y="192" text-anchor="middle">projected value</text>
-<text class="dsub" x="265" y="208" text-anchor="middle">vs right keys</text>
-<rect class="dbox" x="375" y="148" width="150" height="76" rx="8"/>
-<text class="dtxt" x="450" y="174" text-anchor="middle">Proxy score s₂</text>
-<text class="dsub" x="450" y="192" text-anchor="middle">projection similarity</text>
-<text class="dsub" x="450" y="208" text-anchor="middle">quantile-calibrated</text>
-<rect class="dbox" x="560" y="148" width="150" height="76" rx="8"/>
-<text class="dtxt" x="635" y="174" text-anchor="middle">Threshold routing</text>
-<text class="dsub" x="635" y="192" text-anchor="middle">confident: use score</text>
-<text class="dsub" x="635" y="208" text-anchor="middle">uncertain: go to LLM</text>
-<rect class="dor" x="745" y="148" width="150" height="76" rx="8"/>
-<text class="dtxt" x="820" y="174" text-anchor="middle">Oracle LLM</text>
-<text class="dsub" x="820" y="192" text-anchor="middle">predicate on uncertain</text>
-<text class="dsub" x="820" y="208" text-anchor="middle">pairs only</text>
-<line class="dl" x1="155" y1="186" x2="190" y2="186" marker-end="url(#jArr)"/>
-<line class="dl" x1="340" y1="186" x2="375" y2="186" marker-end="url(#jArr)"/>
-<line class="dl" x1="525" y1="186" x2="560" y2="186" marker-end="url(#jArr)"/>
-<line class="dl" x1="710" y1="186" x2="745" y2="186" marker-end="url(#jArr)"/>
+<line class="dl" x1="155" y1="64" x2="190" y2="64" marker-end="url(#jArr)"/>
+<line class="dl" x1="340" y1="64" x2="375" y2="64" marker-end="url(#jArr)"/>
+<line class="dl" x1="525" y1="64" x2="560" y2="64" marker-end="url(#jArr)"/>
+<line class="dl" x1="710" y1="64" x2="745" y2="64" marker-end="url(#jArr)"/>
 
-<text class="dh" x="5" y="262">Plan selection: learn thresholds per plan, then run the cheapest</text>
-<rect class="dbox" x="5" y="272" width="150" height="76" rx="8"/>
-<text class="dtxt" x="80" y="298" text-anchor="middle">Sample pairs</text>
-<text class="dsub" x="80" y="316" text-anchor="middle">importance sampling</text>
-<text class="dsub" x="80" y="332" text-anchor="middle">over left × right</text>
-<rect class="dbox" x="190" y="272" width="150" height="76" rx="8"/>
-<text class="dtxt" x="265" y="298" text-anchor="middle">Oracle labels</text>
-<text class="dsub" x="265" y="316" text-anchor="middle">on the sample</text>
-<text class="dsub" x="265" y="332" text-anchor="middle">for each plan</text>
-<rect class="dbox" x="375" y="272" width="150" height="76" rx="8"/>
-<text class="dtxt" x="450" y="298" text-anchor="middle">Learn thresholds</text>
-<text class="dsub" x="450" y="316" text-anchor="middle">per candidate plan</text>
-<text class="dsub" x="450" y="332" text-anchor="middle">independently</text>
-<rect class="dbox" x="560" y="272" width="150" height="76" rx="8"/>
-<text class="dtxt" x="635" y="298" text-anchor="middle">Cost per plan</text>
-<text class="dsub" x="635" y="316" text-anchor="middle">oracle calls implied</text>
-<text class="dsub" x="635" y="332" text-anchor="middle">by its thresholds</text>
-<rect class="dacc" x="745" y="272" width="150" height="76" rx="8"/>
-<text class="dtxt" x="820" y="298" text-anchor="middle">Run cheapest plan</text>
-<text class="dsub" x="820" y="316" text-anchor="middle">with its thresholds</text>
-<text class="dsub" x="820" y="332" text-anchor="middle">lowest oracle cost</text>
-<line class="dl" x1="155" y1="310" x2="190" y2="310" marker-end="url(#jArr)"/>
-<line class="dl" x1="340" y1="310" x2="375" y2="310" marker-end="url(#jArr)"/>
-<line class="dl" x1="525" y1="310" x2="560" y2="310" marker-end="url(#jArr)"/>
-<line class="dl" x1="710" y1="310" x2="745" y2="310" marker-end="url(#jArr)"/>
+<text class="dh" x="5" y="136">Plan 2 · project-sim-filter (LLM predicts key first — O(|T₁|) parallel LLM calls, chosen on BioDEX)</text>
+<rect class="dbox" x="5" y="146" width="150" height="72" rx="8"/>
+<text class="dtxt" x="80" y="172" text-anchor="middle">1. LLM projection</text>
+<text class="dsub" x="80" y="190" text-anchor="middle">1 call per left row</text>
+<text class="dsub" x="80" y="206" text-anchor="middle">(blind to right table)</text>
+
+<rect class="dbox" x="190" y="146" width="150" height="72" rx="8"/>
+<text class="dtxt" x="265" y="172" text-anchor="middle">2. Embed &amp; match</text>
+<text class="dsub" x="265" y="190" text-anchor="middle">Predicted value vs.</text>
+<text class="dsub" x="265" y="206" text-anchor="middle">right join keys</text>
+
+<rect class="dbox" x="375" y="146" width="150" height="72" rx="8"/>
+<text class="dtxt" x="450" y="172" text-anchor="middle">3. Proxy score s₂</text>
+<text class="dsub" x="450" y="190" text-anchor="middle">Projection similarity</text>
+<text class="dsub" x="450" y="206" text-anchor="middle">binned to quantiles</text>
+
+<rect class="dbox" x="560" y="146" width="150" height="72" rx="8"/>
+<text class="dtxt" x="635" y="172" text-anchor="middle">4. Route by τ⁻, τ⁺</text>
+<text class="dsub" x="635" y="190" text-anchor="middle">s₂ ≥ τ⁺ or ≤ τ⁻: done</text>
+<text class="dsub" x="635" y="206" text-anchor="middle">mid-band: send to LLM</text>
+
+<rect class="dor" x="745" y="146" width="150" height="72" rx="8"/>
+<text class="dtxt" x="820" y="172" text-anchor="middle">5. Oracle LLM</text>
+<text class="dsub" x="820" y="190" text-anchor="middle">Verify uncertain</text>
+<text class="dsub" x="820" y="206" text-anchor="middle">pairs only</text>
+
+<line class="dl" x1="155" y1="182" x2="190" y2="182" marker-end="url(#jArr)"/>
+<line class="dl" x1="340" y1="182" x2="375" y2="182" marker-end="url(#jArr)"/>
+<line class="dl" x1="525" y1="182" x2="560" y2="182" marker-end="url(#jArr)"/>
+<line class="dl" x1="710" y1="182" x2="745" y2="182" marker-end="url(#jArr)"/>
+
+<text class="dh" x="5" y="256">Optimizer · Sample-based plan selection (picks lower estimated Oracle cost)</text>
+<rect class="dbox" x="5" y="266" width="150" height="72" rx="8"/>
+<text class="dtxt" x="80" y="292" text-anchor="middle">Sample pairs</text>
+<text class="dsub" x="80" y="310" text-anchor="middle">Importance sampling</text>
+<text class="dsub" x="80" y="326" text-anchor="middle">over T₁ × T₂</text>
+
+<rect class="dbox" x="190" y="266" width="150" height="72" rx="8"/>
+<text class="dtxt" x="265" y="292" text-anchor="middle">Oracle labels</text>
+<text class="dsub" x="265" y="310" text-anchor="middle">Evaluate ground truth</text>
+<text class="dsub" x="265" y="326" text-anchor="middle">on sample pairs</text>
+
+<rect class="dbox" x="375" y="266" width="150" height="72" rx="8"/>
+<text class="dtxt" x="450" y="292" text-anchor="middle">Learn τ⁻, τ⁺</text>
+<text class="dsub" x="450" y="310" text-anchor="middle">Fit cutoffs for Plan 1</text>
+<text class="dsub" x="450" y="326" text-anchor="middle">&amp; Plan 2 separately</text>
+
+<rect class="dbox" x="560" y="266" width="150" height="72" rx="8"/>
+<text class="dtxt" x="635" y="292" text-anchor="middle">Estimate cost</text>
+<text class="dsub" x="635" y="310" text-anchor="middle">Count mid-band pairs</text>
+<text class="dsub" x="635" y="326" text-anchor="middle">needing Oracle</text>
+
+<rect class="dacc" x="745" y="266" width="150" height="72" rx="8"/>
+<text class="dtxt" x="820" y="292" text-anchor="middle">Execute winner</text>
+<text class="dsub" x="820" y="310" text-anchor="middle">Run plan with fewest</text>
+<text class="dsub" x="820" y="326" text-anchor="middle">Oracle calls</text>
+
+<line class="dl" x1="155" y1="302" x2="190" y2="302" marker-end="url(#jArr)"/>
+<line class="dl" x1="340" y1="302" x2="375" y2="302" marker-end="url(#jArr)"/>
+<line class="dl" x1="525" y1="302" x2="560" y2="302" marker-end="url(#jArr)"/>
+<line class="dl" x1="710" y1="302" x2="745" y2="302" marker-end="url(#jArr)"/>
 </svg>
 
-<ul>
-<li><b>sim-filter</b> uses embedding similarity between join keys. It works when matching pairs tend to look alike, which is not always true.</li>
-<li><b>project-sim-filter</b> asks the LLM, once per left row and fully in parallel, what the matching right key would be, without seeing the right table. It helps when true matches have low raw similarity.</li>
-<li><b>Example (Figure 2):</b> join papers to datasets with "the paper {abstract} uses the {dataset_name}". The projection asks which dataset each abstract uses.</li>
-</ul>
+<div class="grid" style="margin-top:10px">
+<div class="box">
+<h3>Why Plan 1 can fail (Low raw similarity)</h3>
+<p style="font-size:14px;margin-bottom:0"><b>Left:</b> Long paper abstract mentioning <i>"...evaluated on ImageNet-1K..."</i><br>
+<b>Right:</b> Short dataset name <code>"ImageNet"</code><br>
+→ Raw embedding similarity <i>s₁</i> is noisy; wide mid-band forces many Oracle calls.</p>
+</div>
+<div class="box">
+<h3>Why Plan 2 wins (Projection bridges gap)</h3>
+<p style="font-size:14px;margin-bottom:0"><b>Step 1:</b> Parallel <code>sem_map</code> extracts <code>"ImageNet"</code> from abstract (linear <i>O(|T₁|)</i> cost).<br>
+<b>Step 2:</b> Embedding match <code>"ImageNet"</code> ↔ <code>"ImageNet"</code> gives sharp score <i>s₂</i> → narrow mid-band.</p>
+</div>
+</div>
 </section>
 
 <section class="slide" data-part="2">
 <h2>Evidence: filter and join optimizations</h2>
-<p class="sub">Sections 5.1 and 5.2; Llama-3-70B oracle, 4×A100, vLLM</p>
-<h3>Fact-checking on FEVER (1,000 claims; map → search → filter)</h3>
-<table>
-<tr><th>Method</th><th class="n">Accuracy</th><th class="n">ET batched (s)</th><th class="n">ET unbatched (s)</th><th class="n">LoC</th></tr>
+<p class="sub">Sections 5.1 and 5.2 · Llama-3-70B oracle, 4×A100, vLLM (γ<sub>R</sub> = γ<sub>P</sub> = 0.9, δ = 0.2)</p>
+
+<div class="grid">
+<div class="box">
+<h3>1. Fact-checking on FEVER (1,000 claims)</h3>
+<svg class="diag" viewBox="0 0 430 185" role="img" aria-label="FEVER Accuracy and Latency comparison">
+<text class="dtxt" x="8" y="18">Accuracy (%) vs. Batched Execution Time (s)</text>
+
+<text class="dsub" x="8" y="45">LOTUS (optimized)</text>
+<rect class="dacc" x="145" y="32" width="218" height="16" rx="3"/>
+<text class="dtxt" x="370" y="45">91.0% (190s)</text>
+
+<text class="dsub" x="8" y="75">LOTUS (unoptimized)</text>
+<rect class="drej" x="145" y="62" width="219" height="16" rx="3"/>
+<text class="dsub" x="370" y="75">91.2% (329s)</text>
+
+<text class="dsub" x="8" y="105">AI UDF pipeline</text>
+<rect class="drej" x="145" y="92" width="215" height="16" rx="3"/>
+<text class="dsub" x="370" y="105">89.9% (689s)</text>
+
+<text class="dsub" x="8" y="135">FacTool (manual)</text>
+<rect class="drej" x="145" y="122" width="194" height="16" rx="3"/>
+<text class="dsub" x="370" y="135">80.9% (N/A)</text>
+
+<text class="dsub" x="8" y="165">AI UDF + UQE filter</text>
+<rect class="dor" x="145" y="152" width="158" height="16" rx="3"/>
+<text class="dsub" x="370" y="165">66.0% (184s)</text>
+</svg>
+<table style="font-size:13px;margin-bottom:0">
+<tr><th>Method</th><th class="n">Acc.</th><th class="n">Batch (s)</th><th class="n">Unbatch (s)</th><th class="n">LoC</th></tr>
 <tr><td>FacTool</td><td class="n">80.9</td><td class="n">N/A</td><td class="n">5,396</td><td class="n">&gt;750</td></tr>
-<tr><td>AI UDF: map, search, map</td><td class="n">89.9</td><td class="n">688.9</td><td class="n">4,454</td><td class="n">&lt;50</td></tr>
-<tr><td>AI UDF + UQE filter</td><td class="n">66.0</td><td class="n">184.4</td><td class="n">738</td><td class="n">150</td></tr>
-<tr><td>LOTUS filter (unoptimized)</td><td class="n">91.2</td><td class="n">329.1</td><td class="n">989</td><td class="n">&lt;50</td></tr>
-<tr class="hl"><td>LOTUS filter (optimized)</td><td class="n">91.0</td><td class="n">190.0</td><td class="n">776</td><td class="n">&lt;50</td></tr>
+<tr><td>AI UDF + UQE</td><td class="n">66.0</td><td class="n">184.4</td><td class="n">738</td><td class="n">150</td></tr>
+<tr><td>LOTUS (unopt.)</td><td class="n">91.2</td><td class="n">329.1</td><td class="n">989</td><td class="n">&lt;50</td></tr>
+<tr class="hl"><td>LOTUS (opt.)</td><td class="n">91.0</td><td class="n">190.0</td><td class="n">776</td><td class="n">&lt;50</td></tr>
 </table>
-<p>The optimized filter keeps 99.8% of unoptimized accuracy at 1.7× lower batched time. UQE's fixed embedding proxy cannot learn that it is a poor fit here. LOTUS is 38% more accurate than UQE at equal latency.</p>
-<h3>BioDEX join (250 articles, 24,000 labels): plan selection</h3>
-<table>
-<tr><th>Plan</th><th class="n">RP@5</th><th class="n">RP@10</th><th class="n">ET (s)</th><th class="n">LLM calls</th></tr>
+</div>
+
+<div class="box">
+<h3>2. BioDEX Join (250 × 24,000 = 6.0M pairs)</h3>
+<svg class="diag" viewBox="0 0 430 185" role="img" aria-label="BioDEX LLM Calls and RP@5 comparison">
+<text class="dtxt" x="8" y="18">LLM Calls (Log-scale visual) &amp; Rank Precision (RP@5)</text>
+
+<text class="dsub" x="8" y="50">Reference (Nested)</text>
+<rect class="dor" x="130" y="36" width="215" height="18" rx="3"/>
+<text class="dsub" x="352" y="50">~6.1M calls</text>
+
+<text class="dsub" x="8" y="92">Plan 1: sim-filter</text>
+<rect class="drej" x="130" y="78" width="95" height="18" rx="3"/>
+<text class="dsub" x="232" y="92">27,687 (RP@5: 0.154)</text>
+
+<text class="dsub" x="8" y="134">Plan 2: proj-sim</text>
+<rect class="dacc" x="130" y="120" width="38" height="18" rx="3"/>
+<text class="dtxt" x="175" y="134">5,290 (RP@5: 0.212)</text>
+
+<text class="dsub" x="8" y="168">Optimizer picks Plan 2 → ~1,150× fewer calls vs. Reference</text>
+</svg>
+<table style="font-size:13px;margin-bottom:0">
+<tr><th>Plan</th><th class="n">RP@5</th><th class="n">RP@10</th><th class="n">ET (s)</th><th class="n">Calls</th></tr>
+<tr><td>Reference (est.)</td><td class="n">—</td><td class="n">—</td><td class="n">~2.1M</td><td class="n">~6.1M</td></tr>
 <tr><td>Plan 1: sim-filter</td><td class="n">0.154</td><td class="n">0.170</td><td class="n">12,563</td><td class="n">27,687</td></tr>
-<tr class="hl"><td>Plan 2: project-sim-filter (chosen)</td><td class="n">0.212</td><td class="n">0.213</td><td class="n">2,116</td><td class="n">5,290</td></tr>
+<tr class="hl"><td>Plan 2: proj-sim</td><td class="n">0.212</td><td class="n">0.213</td><td class="n">2,116</td><td class="n">5,290</td></tr>
 </table>
-<p>Plan 2 gives 37% higher RP@5 and 25% higher RP@10 than Plan 1, with far fewer calls. The reference algorithm needs about 6.1M calls (estimated 2.1M s), so the chosen plan is roughly 1,000× cheaper in calls.</p>
+</div>
+</div>
+
+<div class="def" style="margin-top:10px;margin-bottom:0">
+<b>Key quantitative takeaways:</b>
+(1) <b>FEVER:</b> Optimized filter retains <b>99.8%</b> of reference accuracy (91.0 vs. 91.2) at <b>1.7×</b> faster batched speed, and beats UQE by <b>+25 pts</b> (+38% relative) at equal latency.
+(2) <b>BioDEX:</b> Plan 2 achieves <b>+37.7%</b> higher RP@5 (0.212 vs. 0.154) with <b>5.2×</b> fewer calls than Plan 1 (~1,000× fewer than reference).
+</div>
 </section>
 
 <!-- PART 3 -->
@@ -454,134 +902,284 @@ pre code{background:none;padding:0}
 
 <section class="slide" data-part="3">
 <h2>Semantic group-by</h2>
-<p class="sub">Sections 2.4 and 3.3: a two-stage clustering heuristic, with a proxy for stage-2 assignment</p>
-<p>Objective: choose C labels that maximize the summed best label score over tuples. This is NP-hard clustering, so the reference algorithm uses a heuristic.</p>
+<p class="sub">Sections 2.4 and 3.3: two-stage clustering heuristic with threshold-based proxy assignment</p>
+<p><b>Goal:</b> pick <i>C</i> group labels to maximize the total best-label score across tuples <i>t<sub>i</sub></i>. Exact clustering is NP-hard, so LOTUS uses a two-stage heuristic.</p>
 
-<svg class="diag" viewBox="0 0 900 380" role="img" aria-labelledby="gbDiagTitle">
-<title id="gbDiagTitle">Semantic group-by: stage 1 label discovery and stage 2 proxy-based assignment with uniform sampling</title>
+<svg class="diag" viewBox="0 0 900 395" role="img" aria-labelledby="gbDiagTitle">
+<title id="gbDiagTitle">Semantic group-by: stage 1 label discovery, stage 2 threshold assignment, and proxy vs oracle tradeoff</title>
 <defs><marker id="gArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5b6675"/></marker></defs>
 
-<text class="dh" x="5" y="18">Stage 1 · discover C labels (reference heuristic)</text>
-<rect class="dbox" x="5" y="28" width="150" height="70" rx="8"/>
-<text class="dtxt" x="80" y="54" text-anchor="middle">sem_map</text>
-<text class="dsub" x="80" y="72" text-anchor="middle">one LLM call</text>
-<text class="dsub" x="80" y="88" text-anchor="middle">candidate label per tuple</text>
-<rect class="dbox" x="190" y="28" width="150" height="70" rx="8"/>
-<text class="dtxt" x="265" y="54" text-anchor="middle">Embed labels</text>
-<text class="dsub" x="265" y="72" text-anchor="middle">one vector per</text>
-<text class="dsub" x="265" y="88" text-anchor="middle">candidate label</text>
-<rect class="dbox" x="375" y="28" width="150" height="70" rx="8"/>
-<text class="dtxt" x="450" y="54" text-anchor="middle">k-means</text>
-<text class="dsub" x="450" y="72" text-anchor="middle">C clusters in</text>
-<text class="dsub" x="450" y="88" text-anchor="middle">embedding space</text>
-<rect class="dbox" x="560" y="28" width="150" height="70" rx="8"/>
-<text class="dtxt" x="635" y="54" text-anchor="middle">Centroid top-k</text>
-<text class="dsub" x="635" y="72" text-anchor="middle">tuples nearest each</text>
-<text class="dsub" x="635" y="88" text-anchor="middle">centroid</text>
-<rect class="dacc" x="745" y="28" width="150" height="70" rx="8"/>
-<text class="dtxt" x="820" y="54" text-anchor="middle">sem_agg</text>
-<text class="dsub" x="820" y="72" text-anchor="middle">one label per</text>
-<text class="dsub" x="820" y="88" text-anchor="middle">cluster</text>
-<line class="dl" x1="155" y1="63" x2="190" y2="63" marker-end="url(#gArr)"/>
-<line class="dl" x1="340" y1="63" x2="375" y2="63" marker-end="url(#gArr)"/>
-<line class="dl" x1="525" y1="63" x2="560" y2="63" marker-end="url(#gArr)"/>
-<line class="dl" x1="710" y1="63" x2="745" y2="63" marker-end="url(#gArr)"/>
+<text class="dh" x="8" y="20">Stage 1 · Discover C labels (reference heuristic)</text>
+<rect class="dbox" x="8" y="30" width="154" height="68" rx="8"/>
+<text class="dtxt" x="85" y="55" text-anchor="middle">1. sem_map</text>
+<text class="dsub" x="85" y="73" text-anchor="middle">1 LLM call per tuple</text>
+<text class="dsub" x="85" y="89" text-anchor="middle">proposes candidate label</text>
 
-<text class="dh" x="5" y="140">Stage 2 · assign each tuple to a center or the oracle</text>
-<rect class="dbox" x="5" y="152" width="150" height="70" rx="8"/>
-<text class="dtxt" x="80" y="178" text-anchor="middle">Tuple t</text>
-<text class="dsub" x="80" y="196" text-anchor="middle">its candidate label</text>
-<text class="dsub" x="80" y="212" text-anchor="middle">from stage 1</text>
-<rect class="dbox" x="190" y="152" width="150" height="70" rx="8"/>
-<text class="dtxt" x="265" y="178" text-anchor="middle">Proxy score</text>
-<text class="dsub" x="265" y="196" text-anchor="middle">similarity to each</text>
-<text class="dsub" x="265" y="212" text-anchor="middle">discovered center</text>
-<rect class="dbox" x="375" y="152" width="150" height="70" rx="8"/>
-<text class="dtxt" x="450" y="178" text-anchor="middle">Score ≥ τ ?</text>
-<text class="dsub" x="450" y="196" text-anchor="middle">τ learned on a</text>
-<text class="dsub" x="450" y="212" text-anchor="middle">uniform sample</text>
-<line class="dl" x1="155" y1="187" x2="190" y2="187" marker-end="url(#gArr)"/>
-<line class="dl" x1="340" y1="187" x2="375" y2="187" marker-end="url(#gArr)"/>
-<rect class="dacc" x="560" y="152" width="200" height="32" rx="6"/>
-<text class="dtxt" x="660" y="173" text-anchor="middle">yes: take the center as label</text>
-<rect class="dor" x="560" y="190" width="200" height="32" rx="6"/>
-<text class="dtxt" x="660" y="211" text-anchor="middle">no: pointwise LLM label</text>
-<line class="dl" x1="525" y1="176" x2="560" y2="168" marker-end="url(#gArr)"/>
-<line class="dl" x1="525" y1="198" x2="560" y2="206" marker-end="url(#gArr)"/>
-<text class="dsub" x="5" y="248">Pointwise LLM calls avoid long-context scaling; the proxy reuses stage-1 embeddings, so threshold search is cheap.</text>
+<rect class="dbox" x="192" y="30" width="154" height="68" rx="8"/>
+<text class="dtxt" x="269" y="55" text-anchor="middle">2. Embed labels</text>
+<text class="dsub" x="269" y="73" text-anchor="middle">map candidate text</text>
+<text class="dsub" x="269" y="89" text-anchor="middle">into vector space</text>
 
-<rect class="dbox" x="5" y="268" width="890" height="62" rx="8"/>
-<text class="dtxt" x="20" y="292">Why uniform, not importance, sampling?</text>
-<text class="dsub" x="20" y="311">Filters and joins target one possibly rare class, so importance sampling concentrates the budget there.</text>
-<text class="dsub" x="20" y="326">Group-by must represent all C groups, so the threshold sample is drawn uniformly.</text>
+<rect class="dbox" x="376" y="30" width="154" height="68" rx="8"/>
+<text class="dtxt" x="453" y="55" text-anchor="middle">3. k-means (k = C)</text>
+<text class="dsub" x="453" y="73" text-anchor="middle">group vectors into</text>
+<text class="dsub" x="453" y="89" text-anchor="middle">C cluster centroids</text>
 
-<text class="dsub" x="5" y="364">Guarantee: classification accuracy ≥ γ with probability 1 − δ, relative to the reference algorithm's assignments.</text>
+<rect class="dbox" x="560" y="30" width="154" height="68" rx="8"/>
+<text class="dtxt" x="637" y="55" text-anchor="middle">4. Nearest top-k</text>
+<text class="dsub" x="637" y="73" text-anchor="middle">pick tuples closest</text>
+<text class="dsub" x="637" y="89" text-anchor="middle">to each centroid</text>
+
+<rect class="dacc" x="744" y="30" width="148" height="68" rx="8"/>
+<text class="dtxt" x="818" y="55" text-anchor="middle">5. sem_agg</text>
+<text class="dsub" x="818" y="73" text-anchor="middle">summarize into</text>
+<text class="dsub" x="818" y="89" text-anchor="middle">1 final label per group</text>
+
+<line class="dl" x1="162" y1="64" x2="192" y2="64" marker-end="url(#gArr)"/>
+<line class="dl" x1="346" y1="64" x2="376" y2="64" marker-end="url(#gArr)"/>
+<line class="dl" x1="530" y1="64" x2="560" y2="64" marker-end="url(#gArr)"/>
+<line class="dl" x1="714" y1="64" x2="744" y2="64" marker-end="url(#gArr)"/>
+
+<text class="dh" x="8" y="132">Stage 2 · Assign tuples using similarity threshold τ</text>
+<rect class="dbox" x="8" y="142" width="170" height="72" rx="8"/>
+<text class="dtxt" x="93" y="168" text-anchor="middle">Tuple t + label</text>
+<text class="dsub" x="93" y="187" text-anchor="middle">compute sim(label, center)</text>
+<text class="dsub" x="93" y="204" text-anchor="middle">reuses Stage 1 vectors</text>
+
+<rect class="dbox" x="215" y="142" width="185" height="72" rx="8"/>
+<text class="dtxt" x="307" y="168" text-anchor="middle">Is sim(t, c) ≥ τ ?</text>
+<text class="dsub" x="307" y="187" text-anchor="middle">τ learned via CLT from</text>
+<text class="dsub" x="307" y="204" text-anchor="middle">a uniform sample (&lt; 5 s)</text>
+
+<rect class="dacc" x="445" y="142" width="215" height="32" rx="6"/>
+<text class="dtxt" x="552" y="163" text-anchor="middle">Yes (sim ≥ τ): assign center</text>
+
+<rect class="dor" x="445" y="182" width="215" height="32" rx="6"/>
+<text class="dtxt" x="552" y="203" text-anchor="middle">No (sim &lt; τ): ask oracle LLM</text>
+
+<rect class="dbox" x="695" y="142" width="197" height="72" rx="8"/>
+<text class="dtxt" x="793" y="167" text-anchor="middle">Guarantee rule</text>
+<text class="dsub" x="793" y="186" text-anchor="middle">P(acc ≥ γ) ≥ 1 − δ</text>
+<text class="dsub" x="793" y="203" text-anchor="middle">vs. reference assignments</text>
+
+<line class="dl" x1="178" y1="178" x2="215" y2="178" marker-end="url(#gArr)"/>
+<line class="dl" x1="400" y1="164" x2="445" y2="158" marker-end="url(#gArr)"/>
+<line class="dl" x1="400" y1="190" x2="445" y2="198" marker-end="url(#gArr)"/>
+<line class="dl" x1="660" y1="178" x2="695" y2="178" marker-end="url(#gArr)"/>
+
+<text class="dh" x="8" y="250">ArXiv topic example (N = 647 papers, C = 5 clusters, ~44 s total)</text>
+<rect class="dbox" x="8" y="260" width="884" height="122" rx="8"/>
+
+<text class="dtxt" x="24" y="286">Proxy-only speed vs. Oracle</text>
+<rect class="dacc" x="245" y="272" width="520" height="18" rx="4"/>
+<text class="dsub" x="774" y="286">17.4× faster</text>
+
+<text class="dtxt" x="24" y="314">Proxy-only accuracy drop</text>
+<rect class="dor" x="245" y="300" width="202" height="18" rx="4"/>
+<text class="dsub" x="456" y="314">~39% lower without oracle fallback</text>
+
+<text class="dsub" x="24" y="346">• Why uniform sampling? Group-by covers all C groups (e.g., rec, retrieval, LLM apps, AI security, robotics).</text>
+<text class="dsub" x="24" y="366">• Importance sampling fits 1 rare target class; uniform sampling prevents missing small groups when tuning τ.</text>
 </svg>
 
-<ul>
-<li><b>Stage 1 (reference):</b> the LLM proposes a candidate label per tuple. Labels are embedded and clustered with k-means, and each cluster's top-k tuples are summarized with <code>sem_agg</code>.</li>
-<li><b>Stage 2 (optimized):</b> similarity between a tuple's candidate label and each center is the proxy. Above τ the center is used directly; otherwise the oracle labels the tuple.</li>
-<li><b>Threshold search</b> reuses the filter's procedure, with classification accuracy over the C groups as the metric. Sampling takes under 5 s.</li>
-<li><b>Topic analysis (647 ArXiv papers, C = 5):</b> labels such as recommendation, retrieval, LLM applications, AI security and robotics emerge in 44 s.</li>
-<li><b>Tradeoff (Fig. 6):</b> the proxy alone is 17.4× faster than the oracle but about 39% less accurate. The accuracy target interpolates between the two.</li>
-</ul>
+<table>
+<tr><th>Aspect</th><th>Formula / Rule</th><th>Intuition &amp; Trade-off</th></tr>
+<tr><td><b>Guarantee</b></td><td><code>P(Acc_proxy ≥ γ) ≥ 1 − δ</code></td><td>Matches reference group labels at least <code>γ</code> with confidence <code>1 − δ</code>; tuning <code>γ</code> slides between speed and accuracy.</td></tr>
+<tr><td><b>Sampling</b></td><td>Uniform sample (&lt; 5 s)</td><td>Gives every one of the <i>C</i> clusters a fair chance when estimating <code>τ</code> (unlike single-class filter/join importance sampling).</td></tr>
+<tr><td><b>ArXiv (N=647, C=5)</b></td><td>17.4× speedup vs. ~39% acc drop (proxy only)</td><td>Discovers 5 topic labels in 44 s; setting a target <code>γ</code> lets the engine call the oracle only when similarity falls below <code>τ</code>.</td></tr>
+</table>
 </section>
 
 <section class="slide" data-part="3">
-<h2>The LOTUS system</h2>
-<p class="sub">Section 4: LLMs Over Tables of Unstructured and Structured data</p>
+<h2>🪷The LOTUS system</h2>
+<p class="sub">Section 4: Declarative semantic operators over structured + unstructured tables</p>
+
+<svg class="diag" viewBox="0 0 900 230" role="img" aria-labelledby="lotusArchTitle">
+<title id="lotusArchTitle">LOTUS architecture: user DataFrame API over an optimizer and vLLM + FAISS execution engines</title>
+<defs><marker id="lArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5b6675"/></marker></defs>
+
+<rect class="dbox" x="12" y="18" width="265" height="192" rx="8"/>
+<text class="dh" x="144" y="44" text-anchor="middle">1. User / Query Layer</text>
+<text class="dtxt" x="144" y="70" text-anchor="middle">Pandas DataFrame (SQL-like)</text>
+<text class="dsub" x="144" y="92" text-anchor="middle">Mixes columns: text, images,</text>
+<text class="dsub" x="144" y="110" text-anchor="middle">numbers, and categorical fields</text>
+<text class="dsub" x="144" y="140" text-anchor="middle">Passes optional params:</text>
+<text class="dsub" x="144" y="160" text-anchor="middle">accuracy target γ &amp; error δ</text>
+<text class="dsub" x="144" y="186" text-anchor="middle">Same semantics fit SQL too</text>
+
+<rect class="dacc" x="315" y="18" width="270" height="192" rx="8"/>
+<text class="dh" x="450" y="44" text-anchor="middle">2. Optimizer &amp; Operators</text>
+<text class="dtxt" x="450" y="70" text-anchor="middle">Core + Extended API</text>
+<text class="dsub" x="450" y="92" text-anchor="middle">filter, join, agg, topk, group_by</text>
+<text class="dsub" x="450" y="112" text-anchor="middle">sim_join, search (+ n_rerank), extract</text>
+<text class="dsub" x="450" y="142" text-anchor="middle">Picks plan &amp; thresholds using</text>
+<text class="dsub" x="450" y="162" text-anchor="middle">sampled proxy vs. oracle checks</text>
+<text class="dsub" x="450" y="186" text-anchor="middle">Balances γ, δ, latency &amp; cost</text>
+
+<rect class="dbox" x="623" y="18" width="265" height="192" rx="8"/>
+<text class="dh" x="755" y="44" text-anchor="middle">3. Execution Engine</text>
+<text class="dtxt" x="755" y="70" text-anchor="middle">vLLM + Local FAISS Index</text>
+<text class="dsub" x="755" y="92" text-anchor="middle">vLLM: fast batched LLM calls</text>
+<text class="dsub" x="755" y="112" text-anchor="middle">FAISS: on-disk vector search</text>
+<text class="dsub" x="755" y="142" text-anchor="middle">sem_index() builds index</text>
+<text class="dsub" x="755" y="162" text-anchor="middle">load_sem_index() reloads it</text>
+<text class="dsub" x="755" y="186" text-anchor="middle">Benchmark targets per task</text>
+
+<line class="dl" x1="277" y1="114" x2="315" y2="114" marker-end="url(#lArr)"/>
+<line class="dl" x1="585" y1="114" x2="623" y2="114" marker-end="url(#lArr)"/>
+</svg>
+
 <div class="grid">
-<div class="box"><h3>Architecture</h3>
+<div class="box"><h3>Extended operators</h3>
 <ul>
-<li>Extends <b>Pandas</b> with a DataFrame API; the same semantics could sit behind SQL.</li>
-<li><b>vLLM</b> for batched inference; <b>FAISS</b> for local, on-disk vector indices.</li>
-<li>Structured and unstructured fields (text, images) can both appear in a langex.</li>
-<li><code>sem_index</code> builds a semantic index; <code>load_sem_index</code> reloads it.</li>
+<li><code>sem_sim_join</code>: embedding similarity match (like equi-join + vector search).</li>
+<li><code>sem_search</code>: similarity top-k with optional <code>n_rerank</code> re-ranking.</li>
+<li><code>sem_extract</code>: pulls exact text spans (entities or quotes).</li>
 </ul></div>
-<div class="box"><h3>Beyond the core operators</h3>
+<div class="box"><h3>Practical usage</h3>
 <ul>
-<li><code>sem_sim_join</code>: match by embedding similarity, like an equi-join, enabling vector search.</li>
-<li><code>sem_search</code>: top-k by similarity, with optional <code>n_rerank</code> re-ranking.</li>
-<li><code>sem_extract</code>: project to verbatim sub-strings, useful for entities and quotes.</li>
-<li>Every operator takes an optional accuracy target and error probability.</li>
+<li>Build/reload indexes via <code>sem_index</code> and <code>load_sem_index</code>.</li>
+<li>Tune <code>γ</code> and <code>δ</code> per task because cost–accuracy curves vary by workload.</li>
 </ul></div>
 </div>
+
 <pre><code>papers_df.<span class="k">sem_join</span>(dataset_df, <span class="s">"The paper {abstract:left} uses the {dataset_name:right}."</span>)
 papers_df.<span class="k">sem_topk</span>(<span class="s">"The paper has the funniest {title}"</span>, K=5)
 papers_df.<span class="k">sem_group_by</span>(<span class="s">"What is the main research topic of the paper {abstract}"</span>, C=10)</code></pre>
-<p>The accuracy, latency and cost tradeoff is task-specific, so benchmark several targets and choose an operating point.</p>
 </section>
 
 <!-- PART 4 -->
 <section class="slide" data-part="4">
-<h2>Evaluation setup and headline results</h2>
-<p class="sub">Section 5: four applications against AI UDFs, UQE, DocETL and hand-built pipelines</p>
+<h2>📊 Evaluation setup and headline results</h2>
+<p class="sub">Section 5: four real tasks comparing LOTUS with other systems and baselines</p>
+
 <div class="grid">
-<div class="box"><h3>Setup</h3>
-<ul>
-<li>4×A100 80GB, Llama-3-70B, E5 embeddings, vLLM, batch 64, temperature 0.</li>
-<li>OpenAI models only where DocETL requires them.</li>
-<li>LOTUS defaults: γ = 0.9, δ = 0.2.</li>
-</ul></div>
-<div class="box"><h3>What is compared</h3>
-<ul>
-<li><b>Analytics systems:</b> AI UDFs, UQE (re-implemented, about 100 lines), DocETL.</li>
-<li><b>Hand-built pipelines:</b> FacTool, a DSPy BioDEX program, a cross-encoder reranker.</li>
-</ul></div>
+  <div class="box">
+    <h3>Setup &amp; target settings</h3>
+    <ul>
+      <li><b>Hardware &amp; models:</b> 4×A100 80GB, Llama-3-70B oracle, E5 embeddings, vLLM, batch size 64, temperature 0.</li>
+      <li><b>External APIs:</b> OpenAI models used only when DocETL requires them.</li>
+      <li><b>Default targets:</b> accuracy target γ = 0.9, max error δ = 0.2 (confidence 1 − δ = 0.8).</li>
+    </ul>
+  </div>
+  <div class="box">
+    <h3>Systems compared</h3>
+    <ul>
+      <li><b>Analytics systems:</b> AI UDFs, UQE (~100 LoC re-implementation), DocETL.</li>
+      <li><b>Hand-built pipelines:</b> FacTool, a DSPy BioDEX program, a cross-encoder reranker.</li>
+    </ul>
+  </div>
 </div>
+
+<div class="def">
+  <b>Two ways to read differences:</b><br>
+  • <b>Percentage-point gap (pp / pts):</b> <code>LOTUS − Base</code> (how many points apart on the same scale).<br>
+  • <b>Relative gain (%):</b> <code>(LOTUS − Base) / Base × 100%</code> (how much higher LOTUS is compared to the baseline).
+</div>
+
+<!-- Visual comparison chart (scales cleanly across desktop and iPad) -->
+<svg class="diag" viewBox="0 0 900 245" role="img" aria-labelledby="evalChartTitle">
+  <title id="evalChartTitle">Visual score comparison across FEVER accuracy, rescaled BioDEX RP@5, and nDCG@10 benchmarks</title>
+
+  <text class="dh" x="18" y="24">Visual score comparison (higher bar = better)</text>
+  <text class="dsub" x="882" y="24" text-anchor="end">Grey = baseline · Teal = LOTUS</text>
+
+  <!-- Row 1: FEVER Accuracy (%) -->
+  <text class="dtxt" x="18" y="60">FEVER (Acc %)</text>
+  <text class="dsub" x="18" y="76">vs. FacTool 80.9%</text>
+  <rect class="drej" x="185" y="47" width="404.5" height="14" rx="3"/>
+  <text class="dsub" x="596" y="59">80.9%</text>
+  <rect class="dacc" x="185" y="64" width="455" height="14" rx="3"/>
+  <text class="dtxt" x="647" y="76">91.0% (+10.1 pp)</text>
+
+  <!-- Row 2: BioDEX RP@5 (rescaled to 0-100 for side-by-side view) -->
+  <text class="dtxt" x="18" y="106">BioDEX (RP@5 ×100)</text>
+  <text class="dsub" x="18" y="122">0.265 ≈ 26.5 vs. 24.73</text>
+  <rect class="drej" x="185" y="93" width="123.65" height="14" rx="3"/>
+  <text class="dsub" x="315" y="105">24.73</text>
+  <rect class="dacc" x="185" y="110" width="132.5" height="14" rx="3"/>
+  <text class="dtxt" x="324" y="122">26.50 (0.265, check scale)</text>
+
+  <!-- Row 3: SciFact nDCG@10 (x100) -->
+  <text class="dtxt" x="18" y="152">SciFact (nDCG@10)</text>
+  <text class="dsub" x="18" y="168">0–1 scale vs. reranker</text>
+  <rect class="drej" x="185" y="139" width="370.5" height="14" rx="3"/>
+  <text class="dsub" x="562" y="151">0.741</text>
+  <rect class="dacc" x="185" y="156" width="382.5" height="14" rx="3"/>
+  <text class="dtxt" x="574" y="168">0.765 (+0.024)</text>
+
+  <!-- Row 4: HellaSwag nDCG@10 (x100) -->
+  <text class="dtxt" x="18" y="198">HellaSwag (nDCG@10)</text>
+  <text class="dsub" x="18" y="214">0–1 scale vs. reranker</text>
+  <rect class="drej" x="185" y="185" width="230.5" height="14" rx="3"/>
+  <text class="dsub" x="422" y="197">0.461</text>
+  <rect class="dacc" x="185" y="202" width="459.5" height="14" rx="3"/>
+  <text class="dtxt" x="651" y="214">0.919 (+0.458, ~2.0×)</text>
+
+  <text class="dsub" x="18" y="237">Topic analysis (647 ArXiv papers, C = 5): finds 5 labels in 44 s (no baseline bar shown here).</text>
+</svg>
+
+<div style="overflow-x:auto">
 <table>
-<tr><th>Task (dataset)</th><th>Operators</th><th>Headline result</th></tr>
-<tr><td>Fact-checking (FEVER)</td><td>map, search, filter</td><td>91.0% accuracy vs FacTool 80.9% in under 50 LoC; 28× faster batched</td></tr>
-<tr><td>Multi-label classification (BioDEX)</td><td>join, rank</td><td>RP@5 0.265 (about 26.5 vs 24.73 for a compiled DSPy pipeline)</td></tr>
-<tr><td>Search and ranking (SciFact, HellaSwag-bench)</td><td>search, topk</td><td>nDCG@10 0.765 vs reranker 0.741 (SciFact); 0.919 vs 0.461 (HellaSwag-bench)</td></tr>
-<tr><td>Topic analysis (647 ArXiv papers)</td><td>group_by</td><td>Five labels in 44 s; see the group-by slide</td></tr>
+  <tr>
+    <th>Task (dataset)</th>
+    <th>Ops</th>
+    <th>LOTUS vs. baseline</th>
+    <th>Point gap</th>
+    <th>Relative %</th>
+    <th>Key math / context note</th>
+  </tr>
+  <tr>
+    <td><b>Fact-checking</b><br>(FEVER)</td>
+    <td><code>map</code>, <code>search</code>, <code>filter</code></td>
+    <td><b>91.0%</b> vs. FacTool <b>80.9%</b><br>(vs. UQE <b>66.0%</b>)</td>
+    <td>+10.1 pp<br>(vs. UQE +25.0 pp)</td>
+    <td>+12.5%<br>(vs. UQE +37.9%)</td>
+    <td>&lt;50 LoC; <b>28×</b> compares batched LOTUS vs. unbatched FacTool.</td>
+  </tr>
+  <tr>
+    <td><b>BioDEX</b><br>(multi-label)</td>
+    <td><code>join</code>, <code>rank</code></td>
+    <td><b>0.265</b> (≈ <b>26.5</b>) vs. DSPy <b>24.73</b></td>
+    <td>≈ +1.77 pts<br>(on 0–100 scale)</td>
+    <td>≈ +7.2%</td>
+    <td><code>0.265 × 100 = 26.5</code>; verify scale (0–1 vs. 0–100) before citing.</td>
+  </tr>
+  <tr>
+    <td><b>SciFact</b><br>(search/rank)</td>
+    <td><code>search</code>, <code>topk</code></td>
+    <td><b>0.765</b> vs. reranker <b>0.741</b></td>
+    <td>+0.024</td>
+    <td>+3.2%</td>
+    <td>nDCG@10 on 0–1 scale.</td>
+  </tr>
+  <tr>
+    <td><b>HellaSwag</b><br>(search/rank)</td>
+    <td><code>search</code>, <code>topk</code></td>
+    <td><b>0.919</b> vs. reranker <b>0.461</b></td>
+    <td>+0.458</td>
+    <td>+99.3%</td>
+    <td>nDCG@10 on 0–1 scale; nearly <b>2.0×</b> the reranker score.</td>
+  </tr>
+  <tr>
+    <td><b>Topic analysis</b><br>(647 ArXiv)</td>
+    <td><code>group_by</code></td>
+    <td><b>5 labels</b> in <b>44 s</b></td>
+    <td>—</td>
+    <td>—</td>
+    <td>Full label discovery + assignment for C = 5 groups in 44 s.</td>
+  </tr>
 </table>
-<p class="src">The abstract says up to 170% higher accuracy than recent LLM analytics systems; the introduction says up to 100%. Cite one and state which.</p>
+</div>
+
+<p class="src warn"><b>Paper note:</b> Abstract says up to 170% higher accuracy over recent LLM analytics systems; introduction says up to 100%. State which one and which section you cite.</p>
 </section>
 
 <section class="slide" data-part="4">
 <h2>Versus DocETL, UQE and AI UDFs</h2>
-<p class="sub">BioDEX with Llama-70B (Table 3)</p>
+<p class="sub">BioDEX with Llama-70B (Table 3): ranking quality (RP@5, RP@10) vs. runtime (ET) and LLM calls</p>
+<div class="def"><b>Takeaway:</b> On BioDEX, <b>LOTUS</b> matches DocETL's ranking quality while using about <b>2.3× fewer LLM calls</b> (5,869 vs. 13,433) and avoiding DocETL's optimizer failures—without running millions of nested-loop calls.</div>
+<div style="overflow-x:auto">
 <table>
 <tr><th>Method</th><th class="n">RP@5</th><th class="n">RP@10</th><th class="n">ET (s)</th><th class="n">LLM calls</th></tr>
 <tr><td>Search (embeddings)</td><td class="n">0.106</td><td class="n">0.120</td><td class="n">2.91</td><td class="n">0</td></tr>
@@ -590,38 +1188,184 @@ papers_df.<span class="k">sem_group_by</span>(<span class="s">"What is the main 
 <tr><td>DocETL join + rank (avg of 3 successes)</td><td class="n">0.262</td><td class="n">0.282</td><td class="n">2,342</td><td class="n">13,433</td></tr>
 <tr class="hl"><td>LOTUS join + rank</td><td class="n">0.265</td><td class="n">0.280</td><td class="n">2,503</td><td class="n">5,869</td></tr>
 </table>
+</div>
+<svg class="diag" viewBox="0 0 900 265" role="img" aria-labelledby="bioChartTitle">
+<title id="bioChartTitle">Visual comparison of ranking quality and LLM call volume on BioDEX</title>
+<text class="dh" x="20" y="24">1 · Ranking Quality (higher is better)</text>
+<text class="dsub" x="20" y="42">RP@5 (solid teal) vs. RP@10 (soft amber) — Search &amp; UQE stay low; DocETL &amp; LOTUS tie</text>
+<text class="dtxt" x="20" y="72">Search</text>
+<rect x="135" y="59" width="76" height="10" rx="3" fill="#0f766e"/>
+<rect x="135" y="71" width="86" height="10" rx="3" fill="#f2c58f"/>
+<text class="dsub" x="228" y="74">0.106 / 0.120</text>
+<text class="dtxt" x="20" y="106">UQE</text>
+<rect x="135" y="93" width="82" height="10" rx="3" fill="#0f766e"/>
+<rect x="135" y="105" width="82" height="10" rx="3" fill="#f2c58f"/>
+<text class="dsub" x="225" y="108">0.115 / 0.114</text>
+<text class="dtxt" x="20" y="140">DocETL</text>
+<rect x="135" y="127" width="188" height="10" rx="3" fill="#0f766e"/>
+<rect x="135" y="139" width="202" height="10" rx="3" fill="#f2c58f"/>
+<text class="dsub" x="345" y="142">0.262 / 0.282</text>
+<text class="dtxt" x="20" y="174">LOTUS</text>
+<rect x="135" y="161" width="190" height="10" rx="3" fill="#0f766e"/>
+<rect x="135" y="173" width="201" height="10" rx="3" fill="#f2c58f"/>
+<text class="dtxt" x="344" y="176">0.265 / 0.280</text>
+<line x1="465" y1="16" x2="465" y2="248" stroke="#d3d9e0" stroke-width="1.2"/>
+<text class="dh" x="485" y="24">2 · Practical Call Volume (measured runs)</text>
+<text class="dsub" x="485" y="42">LOTUS uses 56.3% fewer calls than DocETL (5,869 vs. 13,433)</text>
+<text class="dtxt" x="485" y="74">Search</text>
+<rect x="570" y="61" width="4" height="16" rx="2" fill="#8b98a9"/>
+<text class="dsub" x="582" y="74">0 calls</text>
+<text class="dtxt" x="485" y="108">LOTUS</text>
+<rect x="570" y="95" width="110" height="16" rx="4" fill="#0f766e"/>
+<text class="dtxt" x="688" y="108">5,869 calls</text>
+<text class="dtxt" x="485" y="142">DocETL</text>
+<rect x="570" y="129" width="252" height="16" rx="4" fill="#d97706"/>
+<text class="dsub" x="830" y="142">13,433</text>
+<text class="dtxt" x="485" y="176">UQE</text>
+<rect x="570" y="163" width="280" height="16" rx="4" fill="#8b98a9"/>
+<text class="dsub" x="785" y="196">15,000 calls</text>
+<rect x="20" y="204" width="860" height="44" rx="6" fill="#eef1f4"/>
+<text class="dtxt" x="34" y="223">Why AI UDF nested loop is not plotted on the linear bar:</text>
+<text class="dsub" x="34" y="240">6,092,500 calls (~1,038× LOTUS) and ~2,144,560 s (~595.7 hrs / ~24.8 days) — too costly to run in practice.</text>
+</svg>
+<div class="grid">
+<div class="box">
+<h3>Cost &amp; math checks</h3>
 <ul>
-<li><b>AI UDF:</b> the nested loop costs about 1,000× the calls of LOTUS's optimized join, so it is infeasible to run.</li>
-<li><b>UQE:</b> its best-effort embedding filter stays near search-level accuracy, even with a generous call budget.</li>
-<li><b>DocETL:</b> the optimizer needs GPT-4o and fails about 1 in 3 runs. Reported numbers average successful runs only; SciFact produced no successful run.</li>
-<li><b>Original DocETL setup</b> (GPT-4o-mini, sample size 500): LOTUS 0.289 / 0.296 vs DocETL 0.268 / 0.287 for RP@5 / RP@10.</li>
-<li><b>Pointwise and listwise ranking</b> trail the reranker on HellaSwag-bench: AI UDF 0.091 and DocETL 0.246 vs 0.461.</li>
+<li><b>Calls vs. AI UDF:</b> <code>6,092,500 ÷ 5,869 ≈ 1,038×</code> (~1,000× more calls).</li>
+<li><b>Runtime vs. AI UDF:</b> <code>2,144,560 s ÷ 3,600 ≈ 595.7 hrs</code> (~24.8 days).</li>
+<li><b>Calls vs. DocETL:</b> <code>13,433 ÷ 5,869 ≈ 2.29×</code> as many calls; LOTUS saves <code>(13,433 − 5,869) ÷ 13,433 ≈ 56.3%</code> of calls.</li>
+<li><b>UQE:</b> gets <code>0.115</code> RP@5 vs. <code>0.106</code> from plain search despite <code>15,000</code> calls.</li>
 </ul>
+</div>
+<div class="box">
+<h3>Reliability &amp; other settings</h3>
+<ul>
+<li><b>DocETL failures:</b> its GPT-4o optimizer fails in ~1 of 3 runs; reported scores average only successful runs (0 on SciFact).</li>
+<li><b>Original DocETL setup</b> (GPT-4o-mini, n=500): LOTUS gets <code>0.289 / 0.296</code> vs. DocETL <code>0.268 / 0.287</code> (RP@5 / RP@10).</li>
+<li><b>HellaSwag-bench ranking:</b> pointwise (AI UDF: <code>0.091</code>) and listwise (DocETL: <code>0.246</code>) trail the reranker (<code>0.461</code>).</li>
+</ul>
+</div>
+</div>
 </section>
 
 <section class="slide" data-part="4">
 <h2>Do the guarantees hold?</h2>
-<p class="sub">Section 5.5: sem_filter on FEVER, Llama-70B oracle, Llama-8B and TinyLlama-1B proxies, δ = 0.2 and 0.4</p>
-<ul>
-<li><b>Calibration:</b> observed average recall and precision (over 20 trials) rise with the configured targets, for both proxies.</li>
-<li><b>Proxy quality:</b> the weaker TinyLlama needs more oracle calls at the same target.</li>
-<li><b>Cost curve:</b> oracle calls do not grow linearly with the target; the extra cost of a gain depends on where in the range it falls.</li>
-<li><b>Failure rate:</b> with γ<sub>R</sub> = γ<sub>P</sub> = 0.9 and TinyLlama over 50 trials, the observed failure rate stayed <b>below the configured δ</b>, as expected from a conservative implementation.</li>
-</ul>
-<div class="def warn"><b>Scope of the guarantee.</b> It holds for individual operators <b>relative to the reference algorithm</b>, not against ground truth. If the reference is poor on a task, the guarantee inherits that.</div>
+<p class="sub">Section 5.5: sem_filter on FEVER · Oracle: Llama-70B · Proxies: Llama-8B &amp; TinyLlama-1B · δ = 0.2, 0.4</p>
+<!-- Visual 1: Cost curve & error guarantee (SVG charts) -->
+<svg class="diag" viewBox="0 0 900 250" role="img" aria-labelledby="guarChartTitle">
+<title id="guarChartTitle">Proxy cost curve across accuracy targets and observed failure rate vs error budget delta</title>
+<defs>
+  <marker id="gChArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0L10 5L0 10z" fill="#5b6675"/>
+  </marker>
+</defs>
+<!-- Left panel: Cost curve by proxy strength -->
+<rect class="dbox" x="12" y="12" width="428" height="226" rx="8"/>
+<text class="dh" x="28" y="34">1 · Oracle calls vs. accuracy target (γ)</text>
+<text class="dsub" x="28" y="50">Non-linear rise; weaker proxy needs more calls at same γ</text>
+<line class="dl" x1="68" y1="196" x2="405" y2="196" marker-end="url(#gChArr)"/>
+<line class="dl" x1="68" y1="196" x2="68" y2="66" marker-end="url(#gChArr)"/>
+<text class="dsub" x="236" y="216" text-anchor="middle">Target γ (recall / precision goal)</text>
+<text class="dsub" x="58" y="132" text-anchor="end">Oracle</text>
+<text class="dsub" x="58" y="146" text-anchor="end">calls</text>
+<!-- TinyLlama curve (higher calls, curved steep rise) -->
+<path d="M78 186 Q210 176, 300 138 T390 74" stroke="#b45309" stroke-width="2.4" fill="none" stroke-dasharray="5,3"/>
+<!-- Llama-8B curve (lower calls, gentler rise) -->
+<path d="M78 190 Q220 184, 315 162 T390 118" stroke="#0f766e" stroke-width="2.4" fill="none"/>
+<line x1="270" y1="78" x2="294" y2="78" stroke="#b45309" stroke-width="2.4" stroke-dasharray="5,3"/>
+<text class="dsub" x="300" y="82">TinyLlama-1B (weaker)</text>
+<line x1="270" y1="98" x2="294" y2="98" stroke="#0f766e" stroke-width="2.4"/>
+<text class="dsub" x="300" y="102">Llama-8B (stronger)</text>
+<!-- Right panel: Observed failure rate vs delta -->
+<rect class="dbox" x="458" y="12" width="430" height="226" rx="8"/>
+<text class="dh" x="474" y="34">2 · Failure rate vs. error budget (δ)</text>
+<text class="dsub" x="474" y="50">γ_R = γ_P = 0.9 · TinyLlama-1B · 50 trials (conservative)</text>
+<line class="dl" x1="510" y1="196" x2="855" y2="196" marker-end="url(#gChArr)"/>
+<line class="dl" x1="510" y1="196" x2="510" y2="66" marker-end="url(#gChArr)"/>
+<!-- Budget ceiling line (delta) -->
+<line x1="510" y1="102" x2="845" y2="102" stroke="#b45309" stroke-width="1.6" stroke-dasharray="6,4"/>
+<text class="dsub" x="845" y="96" text-anchor="end" style="fill:#b45309">Allowed error ceiling = δ (e.g. 0.2 or 0.4)</text>
+<!-- Observed failure bar (well below ceiling) -->
+<rect class="dacc" x="580" y="156" width="90" height="40" rx="4"/>
+<text class="dtxt" x="625" y="180" text-anchor="middle">Observed</text>
+<text class="dsub" x="625" y="214" text-anchor="middle">50 trials</text>
+<!-- Safe margin bracket -->
+<line x1="745" y1="102" x2="745" y2="156" stroke="#0f766e" stroke-width="2"/>
+<text class="dsub" x="754" y="126" style="fill:#0f766e">Stays below δ</text>
+<text class="dsub" x="754" y="142">(conservative bound)</text>
+</svg>
+<!-- Compact mathematical & experimental summary table -->
+<table>
+<tr><th>Aspect</th><th>Formal / experiment detail</th><th>What happens in practice</th></tr>
+<tr><td><b>Target &amp; confidence</b></td><td>Meet γ<sub>R</sub>, γ<sub>P</sub> w.r.t. reference with prob. ≥ <b>1 − δ</b> (20 trials; δ = 0.2, 0.4)</td><td>Higher set target γ<sub>R</sub> or γ<sub>P</sub> → higher average observed recall &amp; precision</td></tr>
+<tr><td><b>Proxy quality</b></td><td>Compare <b>Llama-8B</b> vs. <b>TinyLlama-1B</b> against <b>Llama-70B</b> oracle</td><td>Weaker proxy (TinyLlama) triggers more oracle calls for the same target</td></tr>
+<tr><td><b>Non-linear cost</b></td><td>Oracle calls vs. target γ across operating range</td><td>Cost rises non-linearly; pushing high targets costs disproportionately more</td></tr>
+<tr><td><b>Failure check</b></td><td><b>γ<sub>R</sub> = γ<sub>P</sub> = 0.9</b>, TinyLlama, <b>50 trials</b></td><td>Observed failure rate stayed <b>&lt; δ</b> (conservative implementation)</td></tr>
+</table>
+<div class="def warn"><b>Scope of the guarantee:</b> Holds per operator <b>relative to the reference algorithm</b> (prob. ≥ 1 − δ), <b>not against ground truth</b>. If the reference is wrong on a task, the guarantee still measures agreement with that reference.</div>
 </section>
 
 <section class="slide" data-part="4">
-<h2>Related work</h2>
-<p class="sub">Section 6</p>
+<h2>📑Related work</h2>
+<p class="sub">Section 6 · Where semantic operators sit relative to prior systems</p>
+<svg class="diag" viewBox="0 0 900 285" role="img" aria-labelledby="relWorkMapTitle">
+<title id="relWorkMapTitle">2D map comparing prior system families by query expressiveness and accuracy guarantee</title>
+<defs>
+  <marker id="rwArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0L10 5L0 10z" fill="#5b6675"/>
+  </marker>
+</defs>
+<!-- Axes -->
+<line class="dl" x1="75" y1="230" x2="865" y2="230" marker-end="url(#rwArr)"/>
+<line class="dl" x1="75" y1="230" x2="75" y2="24" marker-end="url(#rwArr)"/>
+<text class="dsub" x="470" y="256" text-anchor="middle">Richness of Semantic / Relational Operations (row-wise → join, top-k, group-by, agg)</text>
+<text class="dsub" x="22" y="130" text-anchor="middle" transform="rotate(-90 22 130)">Statistical Guarantee</text>
+<!-- Zone dividers -->
+<line class="dl" x1="470" y1="22" x2="470" y2="230" stroke-dasharray="4 4"/>
+<line class="dl" x1="75" y1="126" x2="865" y2="126" stroke-dasharray="4 4"/>
+<text class="dsub" x="858" y="40" text-anchor="end">Formal / Statistical Guarantee</text>
+<text class="dsub" x="858" y="142" text-anchor="end">Empirical / Best-Effort / None</text>
+<!-- Quadrant 1: Bottom-Left (Low-level primitives: row-wise, no guarantee) -->
+<rect class="drej" x="95" y="152" width="350" height="62" rx="7"/>
+<text class="dtxt" x="110" y="174">1 · Batched Inference Primitives (AI UDFs)</text>
+<text class="dsub" x="110" y="193">Databricks, Snowflake, BigQuery, Redshift, Azure</text>
+<text class="dsub" x="110" y="208">Row-wise calls; no declarative join, top-k, or group-by</text>
+<!-- Quadrant 2: Bottom-Right (Rich ops, best-effort / no guarantee) -->
+<rect class="dor" x="490" y="152" width="355" height="62" rx="7"/>
+<text class="dtxt" x="505" y="174">2 · Best-Effort LLM Analytics</text>
+<text class="dsub" x="505" y="193">DocETL (agentic optimizer), UQE (embedding filter)</text>
+<text class="dsub" x="505" y="208">Rich operators, but heuristic tuning &amp; no accuracy bound</text>
+<!-- Quadrant 3: Top-Left (Classic ML query processing: cascades & bounds) -->
+<rect class="dbox" x="95" y="48" width="350" height="64" rx="7"/>
+<text class="dtxt" x="110" y="70">3 · Non-LLM ML Query Processing</text>
+<text class="dsub" x="110" y="89">MADlib, NoScope, BlazeIt, SUPG, probabilistic predicates</text>
+<text class="dsub" x="110" y="105">Reuses cascades &amp; predicate ordering; lacks LLM formalism</text>
+<!-- Quadrant 4: Top-Right (LOTUS target zone) -->
+<rect class="dacc" x="490" y="48" width="355" height="64" rx="7"/>
+<text class="dh" x="505" y="70">LOTUS Semantic Operators (Target)</text>
+<text class="dtxt" x="505" y="89">Declarative operators + proxy cascades + statistical bounds</text>
+<text class="dsub" x="505" y="105">Table QA (RAG, Text2SQL, TAG) can call operators as data API</text>
+</svg>
+<div style="overflow-x:auto">
 <table>
-<tr><th>Family</th><th>Examples</th><th>Contrast with semantic operators</th></tr>
-<tr><td>Batched inference primitives</td><td>AI UDFs in Databricks, Snowflake, BigQuery, Redshift, Azure</td><td>Low-level; no declarative joins, aggregation or ranking</td></tr>
-<tr><td>Best-effort LLM analytics</td><td>DocETL (agentic optimizer), UQE (embedding filter)</td><td>No accuracy guarantees; DocETL shows high variance and optimizer failures</td></tr>
-<tr><td>Non-LLM ML query processing</td><td>MADlib, NoScope, BlazeIt, SUPG, probabilistic predicates</td><td>Cascades and predicate reordering are reusable; the LLM formalism is new</td></tr>
-<tr><td>Table question answering</td><td>RAG, Text2SQL, TAG</td><td>Agents could call semantic operator programs as their data API</td></tr>
+<tr><th>Family</th><th>Examples</th><th>Key contrast with semantic operators</th></tr>
+<tr><td>Batched inference primitives</td><td>AI UDFs (Databricks, Snowflake, BigQuery, Redshift, Azure)</td><td>Low-level row calls; no declarative joins, top-k, group-by, or agg</td></tr>
+<tr><td>Best-effort LLM analytics</td><td>DocETL, UQE</td><td>No accuracy guarantees; DocETL has run variance &amp; optimizer failures</td></tr>
+<tr><td>Non-LLM ML query processing</td><td>MADlib, NoScope, BlazeIt, SUPG, prob. predicates</td><td>Cascades &amp; pruning ideas carry over; new formalism for ambiguous LLMs</td></tr>
+<tr><td>Table question answering</td><td>RAG, Text2SQL, TAG</td><td>Agents can treat semantic operator programs as their data API</td></tr>
 </table>
-<p>Adoption: Google implemented experimental semantic operators in BigQuery DataFrames after the preprint.</p>
+</div>
+<div class="grid">
+<div class="box">
+<h3>Math check (for DB discussion)</h3>
+<p>Each LOTUS operator enforces <code>P(acc ≥ γ) ≥ 1 − δ</code> relative to the reference algorithm. Across <code>m</code> independent stages with budgets <code>δ₁, …, δₘ</code>, union bound gives max total failure risk <code>≤ ∑ δᵢ</code> (not yet unified into one end-to-end optimizer).</p>
+</div>
+<div class="box">
+<h3>Real-world adoption</h3>
+<p>Ideas from classic ML cascades (e.g., BlazeIt / SUPG) adapt to LLM scoring, and Google added experimental semantic operators to <b>BigQuery DataFrames</b> after the preprint.</p>
+</div>
+</div>
 </section>
 
 <section class="slide" data-part="4">
